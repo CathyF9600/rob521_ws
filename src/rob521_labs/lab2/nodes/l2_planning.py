@@ -81,6 +81,7 @@ class PathPlanner:
         self.gamma_RRT = self.gamma_RRT_star + .1
         self.epsilon = 2.5
         
+        self.last_connected_id = 0
         #Pygame window for visualization
         self.window = pygame_utils.PygameWindow(
             "Path Planner", (1000, 1000), self.occupancy_map.shape, self.map_settings_dict, self.goal_point, self.stopping_dist)
@@ -93,69 +94,143 @@ class PathPlanner:
         # print('direction', direction, direction.type)
         return np.array([distance])
 
+    def distance_bw_points(self, p1, p2):
+        x_g = p1[0] - p2[0]
+        y_g = p1[1] - p2[1]
+        return np.sqrt(x_g ** 2 + y_g ** 2)
+
     def distance_to_goal1(self, point):
         # goal distance
         x_g = self.goal_point[0] - point[0]
         y_g = self.goal_point[1] - point[1]
 
         return np.sqrt(x_g ** 2 + y_g ** 2)
+    
+
+    def sample_point_in_bounded_ellipse(self, start, end, x_bounds, y_bounds):
+        """
+        Sample a point inside an ellipse between `start` and `end`, ensuring it lies within given bounds.
+        
+        Parameters:
+            start (np.ndarray): (2,1) array representing the start point [x; y].
+            end (np.ndarray): (2,1) array representing the end point [x; y].
+            x_bounds (tuple): (x_min, x_max) bounds.
+            y_bounds (tuple): (y_min, y_max) bounds.
+
+        Returns:
+            np.ndarray: A sampled point (2,1) within the ellipse and bounds.
+        """
+        center = (start + end) / 2  # Center of the ellipse
+        a = np.linalg.norm(end - start) / 2  # Semi-major axis (half of the distance)
+        b = a / 2  # Arbitrary semi-minor axis (adjustable)
+
+        while True:
+            # Sample a random angle
+            theta = np.random.uniform(0, 2 * np.pi)
+
+            # Sample radius in [0,1] and scale it to fit within the ellipse
+            r = np.random.uniform(0, a) ** 0.5  # Square root for uniform density
+            x_offset = r * a * np.cos(theta)
+            y_offset = r * b * np.sin(theta)
+
+            # Compute the sampled point
+            sampled_point = center + np.array([[x_offset], [y_offset]])
+
+            # Extract x and y
+            x, y = sampled_point[0, 0], sampled_point[1, 0]
+
+            # Check if the sampled point is within the specified bounds
+            if x_bounds[0] <= x <= x_bounds[1] and y_bounds[0] <= y <= y_bounds[1]:
+                return sampled_point
+
+
 
     #Functions required for RRT
-    def sample_map_space_bri(self): # bridge
-        #Return an [x,y] coordinate to drive the robot towards
+    def sample_map_space_bridge(self): # bridge
+        #Return an [x,y] coordinate to drive the robot 
+        # towards
         # print("TO DO: Sample point to drive towards")
         sample = np.zeros((2,1))
         tighter_bound = np.array([[0.0, 44], 
                                  [-46, 10]])
         
-        dist_to_goal = self.distance_to_goal(self.nodes[-1].point) # the last node
-        goal_bias_rate = 0.2
-        cur_rand = np.random.rand()
-        if cur_rand < goal_bias_rate:
-            # Use goal-sampling occasionally
-            sample = self.goal_point
-            return sample
-        
-        if dist_to_goal < 30: #15:
-            # print('The sample is getting close to goal.')
-            padding = dist_to_goal
+        dist_to_goal = self.distance_to_goal(self.nodes[self.last_connected_id].point) # the last node
+
+        if dist_to_goal < 5:
+            sample[0] = np.random.normal(self.goal_point[0], scale=5)  # Mean = goal, std dev = 2
+            sample[1] = np.random.normal(self.goal_point[1], scale=5)
+            c = COLORS['r']
         else:
-            padding = 0.2 * dist_to_goal
-            
-        # form a bound with range of [x_last - padding, goal + padding]
-        x_lower_bound = max((self.nodes[-1].point[0, 0] - padding)[0], tighter_bound[0, 0])
-        x_higher_bound = min((self.goal_point[0, 0] + padding)[0], tighter_bound[0, 1])
-        # form a bound with range of [y_last - padding, goal + padding]
-        y_lower_bound = max((self.goal_point[1, 0] - padding)[0], tighter_bound[1, 0])
-        y_higher_bound = min((self.nodes[-1].point[1, 0] + padding)[0], tighter_bound[1, 1])
+            if len(self.nodes) > 4000: #dist_to_goal < 15: #15:
+                
+                # print('The sample is getting close to goal.')
+                padding = dist_to_goal * 0.5
+                # form a bound with range of [x_last - padding, goal + padding]
+                x_lower_bound = max((self.goal_point[0, 0] - padding)[0], tighter_bound[0, 0])
+                x_higher_bound = min((self.goal_point[0, 0] + padding)[0], tighter_bound[0, 1])
+                # form a bound with range of [y_last - padding, goal + padding]
+                y_lower_bound = max((self.goal_point[1, 0] - padding)[0], tighter_bound[1, 0])
+                y_higher_bound = min( (self.goal_point[1, 0] + padding)[0], tighter_bound[1, 1])
+                c = COLORS['r']
 
-        sample[0] = np.random.uniform(low=x_lower_bound, high=x_higher_bound)
-        sample[1] = np.random.uniform(low=y_lower_bound, high=y_higher_bound)
-        for _ in range(2):
-            # print("x_lower_bound type:", type(x_lower_bound), x_lower_bound)
-            # print("y_lower_bound type:", type(y_lower_bound), y_lower_bound)
+            else:
+                
+                padding = dist_to_goal * 0.4
+                x_lower_bound = max((self.nodes[self.last_connected_id].point[0, 0] - padding)[0], tighter_bound[0, 0])
+                x_higher_bound = min((self.nodes[self.last_connected_id].point[0, 0] + padding)[0], tighter_bound[0, 1])
+                # form a bound with range of [y_last - padding, goal + padding]
+                y_lower_bound = max((self.nodes[self.last_connected_id].point[1, 0] - padding)[0], tighter_bound[1, 0])
+                y_higher_bound = min( (self.nodes[self.last_connected_id].point[1, 0] + padding)[0], tighter_bound[1, 1])
+                    
 
-            # assert np.isscalar(x_lower_bound) and np.isscalar(x_higher_bound), "Bounds must be scalars"
-            # assert np.isscalar(y_lower_bound) and np.isscalar(y_higher_bound), "Bounds must be scalars"
+            # # form a bound with range of [x_last - padding, goal + padding]
+            # x_lower_bound = max((self.nodes[-1].point[0, 0] - padding)[0], tighter_bound[0, 0])
+            # x_higher_bound = min((self.goal_point[0, 0] + padding)[0], tighter_bound[0, 1])
+            # # form a bound with range of [y_last - padding, goal + padding]
+            # y_lower_bound = max((self.goal_point[1, 0] - padding)[0], tighter_bound[1, 0])
+            # y_higher_bound = min( (self.nodes[-1].point[1, 0] + padding)[0], tighter_bound[1, 1])
 
-            rand1 = sample
-            rand2 = np.array([np.random.normal(sample[0], scale=2),  # Mean = goal, std dev = 2
-                            np.random.normal(sample[1], scale=2)]).reshape(-1,1)
-            # print('rand[0]', rand1, rand1.shape)
+            sample[0] = np.random.uniform(low=x_lower_bound, high=x_higher_bound)
+            sample[1] = np.random.uniform(low=y_lower_bound, high=y_higher_bound)
+            sample_cand = []
+            for _ in range(100):
+                # print("x_lower_bound type:", type(x_lower_bound), x_lower_bound)
+                # print("y_lower_bound type:", type(y_lower_bound), y_lower_bound)
 
-            if self.check_for_collision(rand1) and self.check_for_collision(rand2):  # Both points are free
-                midpoint = (rand1 + rand2) / 2
-                if not self.check_for_collision(midpoint):  # The midpoint is in an obstacle
-                    sample = midpoint
-                    break  # Use this sample
-            elif self.check_for_collision(rand1) or self.check_for_collision(rand2): 
-                if not self.check_for_collision(rand1):
-                    sample = rand1
-                elif not self.check_for_collision(rand2):
-                    sample = rand2
-                break
+                # assert np.isscalar(x_lower_bound) and np.isscalar(x_higher_bound), "Bounds must be scalars"
+                # assert np.isscalar(y_lower_bound) and np.isscalar(y_higher_bound), "Bounds must be scalars"
 
-        self.window.add_point(np.array(sample).reshape(2,), radius=1, width=0, color=(0, 0, 255)) # blue
+                rand1 = sample
+                rand2 = np.array([np.random.normal(sample[0], scale=1),  # Mean = goal, std dev = 2
+                                np.random.normal(sample[1], scale=1)]).reshape(-1,1)
+                # print('rand[0]', rand1, rand1.shape)
+
+                if self.check_for_collision(rand1) and self.check_for_collision(rand2):  # Both points are free
+                    midpoint = (rand1 + rand2) / 2
+                    if not self.check_for_collision(midpoint):  # The midpoint is in an obstacle
+                        sample = midpoint
+                        sample_cand.append(sample)
+                        # break  # Use this sample
+                elif self.check_for_collision(rand1) or self.check_for_collision(rand2): 
+                    if not self.check_for_collision(rand1):
+                        sample = rand1
+                    elif not self.check_for_collision(rand2):
+                        sample = rand2
+                    sample_cand.append(sample)
+                    # break
+            metric = self.distance_to_goal(sample)
+            sample_final = sample
+            print('len', len(sample_cand))
+            for cand in sample_cand:
+                # print('cand', cand[:2], self.goal_point)
+                goal_metric = self.distance_to_goal(cand)
+                if goal_metric < metric:
+                    metric = goal_metric
+                    sample_final = cand
+            sample = sample_final
+            c = COLORS['b']
+        self.window.add_point(np.array(sample).reshape(2,), radius=2, width=0, color=c) # blue
+        # input()
         return sample
     
     def sample_map_space(self):
@@ -164,9 +239,8 @@ class PathPlanner:
         sample = np.zeros((2,1))
         tighter_bound = np.array([[0.0, 44], 
                                  [-46, 10]])
-        bridge_rate = 1 # 0.8
         
-        goal_bias_rate = 0 #  0.2
+        goal_bias_rate = 0.2
         cur_rand = np.random.rand()
         if cur_rand < goal_bias_rate:
             # Use goal-sampling occasionally
@@ -180,7 +254,14 @@ class PathPlanner:
             else:
                 if dist_to_goal < 15:
                     # print('The sample is getting close to goal.')
-                    padding = dist_to_goal
+                    padding = dist_to_goal * 1.2
+                    # # form a bound with range of [x_last - padding, goal + padding]
+                    # x_lower_bound = max((self.goal_point[0, 0] - padding)[0], tighter_bound[0, 0])
+                    # x_higher_bound = min((self.goal_point[0, 0] + padding)[0], tighter_bound[0, 1])
+                    # # form a bound with range of [y_last - padding, goal + padding]
+                    # y_lower_bound = max((self.goal_point[0, 0] - padding)[0], tighter_bound[1, 0])
+                    # y_higher_bound = min( (self.goal_point[0, 0] + padding)[0], tighter_bound[1, 1])
+                    
                 else:
                     padding = 0.2 * dist_to_goal
                     
@@ -193,24 +274,25 @@ class PathPlanner:
 
                 sample[0] = np.random.uniform(low=x_lower_bound, high=x_higher_bound)
                 sample[1] = np.random.uniform(low=y_lower_bound, high=y_higher_bound)
-                if cur_rand < bridge_rate:
-                    for _ in range(2):
-                        # print("x_lower_bound type:", type(x_lower_bound), x_lower_bound)
-                        # print("y_lower_bound type:", type(y_lower_bound), y_lower_bound)
+                # print("de", sample)
+                # if cur_rand < bridge_rate:
+                #     for _ in range(2):
+                #         # print("x_lower_bound type:", type(x_lower_bound), x_lower_bound)
+                #         # print("y_lower_bound type:", type(y_lower_bound), y_lower_bound)
 
-                        assert np.isscalar(x_lower_bound) and np.isscalar(x_higher_bound), "Bounds must be scalars"
-                        assert np.isscalar(y_lower_bound) and np.isscalar(y_higher_bound), "Bounds must be scalars"
+                #         assert np.isscalar(x_lower_bound) and np.isscalar(x_higher_bound), "Bounds must be scalars"
+                #         assert np.isscalar(y_lower_bound) and np.isscalar(y_higher_bound), "Bounds must be scalars"
 
-                        rand1 = sample
-                        rand2 = np.array([np.random.normal(sample[0], scale=2),  # Mean = goal, std dev = 2
-                                        np.random.normal(sample[1], scale=2)]).reshape(-1,1)
-                        # print('rand[0]', rand1, rand1.shape)
+                #         rand1 = sample
+                #         rand2 = np.array([np.random.normal(sample[0], scale=2),  # Mean = goal, std dev = 2
+                #                         np.random.normal(sample[1], scale=2)]).reshape(-1,1)
+                #         # print('rand[0]', rand1, rand1.shape)
 
-                        if self.check_for_collision(rand1) and self.check_for_collision(rand2):  # Both points are free
-                            midpoint = (rand1 + rand2) / 2
-                            if not self.check_for_collision(midpoint):  # The midpoint is in an obstacle
-                                sample = midpoint
-                                break  # Use this sample
+                #         if self.check_for_collision(rand1) and self.check_for_collision(rand2):  # Both points are free
+                #             midpoint = (rand1 + rand2) / 2
+                #             if not self.check_for_collision(midpoint):  # The midpoint is in an obstacle
+                #                 sample = midpoint
+                #                 break  # Use this sample
 
         self.window.add_point(np.array(sample).reshape(2,), radius=1, width=0, color=(0, 0, 255)) # blue
         return sample
@@ -243,6 +325,7 @@ class PathPlanner:
         vel, rot_vel = self.robot_controller(node_i, point_s)
         # print('vel', self.robot_controller(node_i, point_s), self.robot_controller1(node_i, point_s))
         # input()
+        # v, r = self.master_controller(node_i, vel, rot_vel)
         robot_traj = self.trajectory_rollout(vel, rot_vel, node_i)
         return robot_traj
     
@@ -250,13 +333,14 @@ class PathPlanner:
         #This controller determines the velocities that will nominally move the robot from node i to node s
         #Max velocities should be enforced
         # print("TO DO: Implement a control scheme to drive you towards the sampled point")
-        K_linear = 0.25
-        K_heading = 0.5
-        K_angular = 1.5
+        K_linear = 0.5
+        K_heading = 0.25
+        K_angular = 0.5
         direction = (point_s - node_i[:2]).flatten()
         distance = np.linalg.norm(direction)
         theta = np.arctan2(direction[1], direction[0])
         heading_e = theta - node_i[2, 0]
+        # print('distance', direction, heading_e)
         # print('heading_e', heading_e)
 
         if heading_e > math.pi: # keep it bw  -pi and pi
@@ -272,6 +356,31 @@ class PathPlanner:
             rot_vel = max(K_angular * heading_e, -self.rot_vel_max)
         return vel, rot_vel
 
+    def master_controller(self, point_s, vel, rot_vel):
+        # with the vel rot vel pair
+        substep_time = self.timestep / self.num_substeps
+        vel_l, rotv_l = [np.array([vel])], [np.array([rot_vel])]
+        print('point_s', point_s)
+        heading_e = point_s[2, 0] + rot_vel
+        for i in range(self.num_substeps-1):
+            x_velos = vel * np.cos(heading_e)
+            y_velos = vel * np.sin(heading_e)
+            # print('contorl ', x_velos, y_velos)
+            x_substep_displacements = substep_time * x_velos
+            y_substep_displacements = substep_time * y_velos
+            cur_p = np.array([x_substep_displacements, y_substep_displacements, heading_e]).reshape(-1, 1)
+            vel, rot_vel = self.robot_controller(cur_p, point_s[:2])
+            # find heading error
+            direction = (point_s[:2] - cur_p[:2]).flatten()
+            theta = np.arctan2(direction[1], direction[0])
+            heading_e = theta - cur_p[2, 0]
+            vel_l.append(np.array([vel]))
+            rotv_l.append(np.array([rot_vel]))
+        v, r = np.array(vel_l), np.array(rotv_l)
+        print('v', v)
+        input('master')
+        return v, r
+
     
     def trajectory_rollout(self, vel, rot_vel, cur_pos):
         # Given your chosen velocities determine the trajectory of the robot for your given timestep
@@ -286,7 +395,9 @@ class PathPlanner:
         headings = np.linspace(init_heading, final_heading, num=self.num_substeps).reshape(-1, 1)
         # Find instantaneous linear velocities at each trajectory subpoint
         x_velos = np.zeros((self.num_substeps, 1)) # first step 0 linear velocity (coresponding to initial heading)
+        # print('headings[0:-1]', headings[0:-1].shape)
         x_velos[1:] = vel * np.cos(headings[0:-1]) # slice all except the last heading
+        # print('vel * np.cos(headings[0:-1])', vel , np.cos(headings[0:-1]), vel * np.cos(headings[0:-1]), self.num_substeps)
         y_velos = np.zeros((self.num_substeps, 1))
         y_velos[1:] = vel * np.sin(headings[0:-1])
         
@@ -432,13 +543,14 @@ class PathPlanner:
             if not collision and not duplicate:
                 self.nodes.append(Node(trajectory_o[:, -1].reshape(3,-1), closest_node_id, cost=0))
                 self.nodes[closest_node_id].children_ids.append(curr_id)
-
+                self.last_connected_id = curr_id
                 # visualizing the valid trajectory
                 temp_pt = np.array(trajectory_o[0:2, :]).copy().T
                 self.window.add_se2_pose(np.array(trajectory_o[:, -1].reshape((3,))))
                 for pt in temp_pt:
                     self.window.add_point(np.copy(pt), color=COLORS['g'])
                 #Check if goal has been reached
+                print('distance', self.distance_to_goal(trajectory_o[:, -1]))
                 if self.distance_to_goal(trajectory_o[:, -1]) < self.stopping_dist:
                     print("RRT FINISHED")
                     path = self.recover_path()
@@ -534,9 +646,10 @@ class PathPlanner:
 
     
         for i in range(50000): #Most likely need more iterations than this to complete the map!
-            print(i)
+            print(len(self.nodes))
             #Sample
-            point = self.sample_map_space_bri()
+            # point = self.sample_map_space_bri()
+            point = self.sample_map_space()
             curr_id = len(self.nodes)
             #Closest Node
             closest_node_id = self.closest_node(point)
@@ -646,8 +759,9 @@ def main():
 
     #RRT precursor
     path_planner = PathPlanner(map_filename, map_setings_filename, goal_point, stopping_dist)
-    # path = path_planner.rrt_planning()
-    path = path_planner.rrt_star_planning1()
+    path = path_planner.rrt_planning()
+    # path = path_planner.rrt_star_planning1()
+
     np.savetxt("mapfile.txt", path_planner.occupancy_map)
     print('path', path)
     node_path_metric = np.hstack(path_planner.recover_path())
