@@ -220,6 +220,8 @@ class PathPlanner:
             if mode != 'rrt': # for rrt star
                 if len(self.nodes) > 4000:
                     std = 12
+                elif len(self.nodes) > 1000:
+                    std = 20
             while not return_condition: # return if sample is within bounds
                 sample[0] = np.random.normal(self.goal_point[0], scale=std)  # Mean = goal, std dev = 10
                 sample[1] = np.random.normal(self.goal_point[1], scale=std)
@@ -401,8 +403,12 @@ class PathPlanner:
     def cost_to_come(self, trajectory_o):
         #The cost to get to a node from lavalle 
         # print("TO DO: Implement a cost to come metric")
-        return np.sum(np.linalg.norm(np.diff(trajectory_o[:2], axis=1), axis=0)) # Euclidean Distance
-    
+        # print('trajectory_o[:2]', trajectory_o[:2])
+        cost = np.sum(np.linalg.norm(trajectory_o[0:2, 1:] - trajectory_o[0:2, -1:], axis=1))
+        cost2 = np.sum(np.linalg.norm(np.diff(trajectory_o[:2], axis=1), axis=0)) # Euclidean Distance
+        # print(cost, cost2)
+        return cost2
+        
     def update_children(self, node_id):
         #Given a node_id with a changed cost, update all connected nodes with the new cost
         # print("TO DO: Update the costs of connected nodes after rewiring.")
@@ -459,6 +465,8 @@ class PathPlanner:
         #You do not need to demonstrate this function to the TAs, but it is left in for you to check your work
         for i in range(50000): #Most likely need more iterations than this to complete the map!
             print('number of nodes', len(self.nodes))
+            if len(self.nodes) == 5000:
+                break
             sampled_collision = True
             sampled_duplicate = True
             while sampled_collision or sampled_duplicate:
@@ -681,17 +689,22 @@ class PathPlanner:
         from queue import PriorityQueue
 
         pq = PriorityQueue()
+        # print(pq.qsize())
         path_dictionary = {}
-        for i in range(50000): #Most likely need more iterations than this to complete the map!
-            print('number of nodes', len(self.nodes))
+        for i in range(50000):
+            if len(self.nodes) > 10000:
+                break
+            if i % 1000 == 0:
+                print('# nodes', len(self.nodes), 'i', i)
             #Sample
             sampled_collision = True
             sampled_duplicate = True
             while sampled_collision or sampled_duplicate:
                 #Sample map space
-                point = self.sample_map_space()
+                point = self.sample_map_space(mode='rrt*')
+                # point = self.sample_map_space()
                 sampled_collision = self.check_for_collision(point)
-                sampled_duplicate = self.check_if_duplicate(point)            
+                sampled_duplicate = self.check_if_duplicate(point)
             curr_id = len(self.nodes)
             #Closest Node
             closest_node_id = self.closest_node(point)
@@ -718,10 +731,10 @@ class PathPlanner:
                 #Default is the closest node
                 best_neighbor_id = closest_node_id
                 lowest_cost_so_far = cost_with_closest
-                traj_n = trajectory_o
+                traj_best = trajectory_o
                 # Find the best neighbor that can reduce cost to come for new point
                 for neighbor_id in neighbors:
-                    print('self.nodes[neighbor_id]', self.nodes[neighbor_id].point)
+                    # print('self.nodes[neighbor_id]', self.nodes[neighbor_id].point)
                     traj_n = self.connect_node_to_point(node_i=self.nodes[neighbor_id].point, point_f=point) # new sub trajectory
                     if not np.array_equal(traj_n, np.zeros((3, self.num_substeps))) \
                          and not self.check_for_collision(traj_n):
@@ -729,8 +742,9 @@ class PathPlanner:
                         if cost_with_neighbor < lowest_cost_so_far:
                             best_neighbor_id = neighbor_id
                             lowest_cost_so_far = cost_with_neighbor
+                            traj_best = traj_n
                 # Wire with the neighbor with lowest cost to come
-                newest_node = Node(traj_n[:,-1].reshape(3,-1), parent_id=best_neighbor_id, cost=lowest_cost_so_far)
+                newest_node = Node(traj_best[:,-1].reshape(3,-1), parent_id=best_neighbor_id, cost=lowest_cost_so_far)
                 self.nodes.append(newest_node)
                 self.nodes[best_neighbor_id].children_ids.append(curr_id)
 
@@ -745,7 +759,7 @@ class PathPlanner:
                 for neighbor_id in neighbors:
                     neighbor_node = self.nodes[neighbor_id]
                     cur_cost = neighbor_node.cost
-                    traj_c = self.connect_node_to_point(neighbor_node.point, point) # c stand for close
+                    traj_c = self.connect_node_to_point(node_i=newest_node.point, point_f=neighbor_node.point[:2]) # c stand for close, connect latter to former
                     if not self.check_for_collision(traj_c) and \
                         not np.array_equal(traj_c, np.zeros((3, self.num_substeps))):
                         new_cost = newest_node.cost + self.cost_to_come(traj_c)
@@ -755,30 +769,30 @@ class PathPlanner:
                             newest_node.children_ids.append(neighbor_id)
                             neighbor_node.parent_id = curr_id
 
-                            # visualizing the rewiring
-                            #for pt in candidate_node.parent_trajectory.T:
-                            #    self.window.add_point(np.copy(pt), color=COLORS['w'])
-                            #candidate_node.parent_trajectory = traj[0:2,:]                       
-                            temp_pt = np.array(traj_c[0:2, :]).copy().T
-                            self.window.add_se2_pose(np.array(traj_c[:, -1].reshape((3,))))
-                            for pt in temp_pt:
-                                self.window.add_point(np.copy(pt), color=COLORS['r'])
+                            # # visualizing the rewiring
+                            # #for pt in candidate_node.parent_trajectory.T:
+                            # #    self.window.add_point(np.copy(pt), color=COLORS['w'])
+                            # #candidate_node.parent_trajectory = traj[0:2,:]                       
+                            # temp_pt = np.array(traj_c[0:2, :]).copy().T
+                            # self.window.add_se2_pose(np.array(traj_c[:, -1].reshape((3,))))
+                            # for pt in temp_pt:
+                            #     self.window.add_point(np.copy(pt), color=COLORS['b'])
                         
                             # self.update_children(neighbor_id)
                             self.update_children1(neighbor_id, cur_cost)
 
                 #Check for early end
-                print('distance', self.distance_to_goal(new_best_trajectory[:, -1]))
+                # print('distance', self.distance_to_goal(new_best_trajectory[:, -1]))
                 if self.distance_to_goal(new_best_trajectory[:, -1]) < self.stopping_dist:
-                    print("RRT* FINISHED")
+                    print("RRT* FINISHED", pq.qsize())
                     path = self.recover_path()
-                    print('cost to come', self.cost_to_come(new_best_trajectory), path)
-                    input()
+                    print('cost to come', self.cost_to_come(new_best_trajectory), new_best_trajectory.shape, len(path))
+                    # input()
                     cur_path_id = id(path)
                     path_dictionary[cur_path_id] = path
                     pq.put((self.cost_to_come(new_best_trajectory),  cur_path_id))
                     # return path
-        print('pq', pq)
+        print('pq len', pq.qsize())
         _, pid = pq.get()
         return path_dictionary[pid]
     
