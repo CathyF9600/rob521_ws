@@ -54,8 +54,8 @@ def robot_controller(node_i, point_s):
     # K_angular = 0.2
 
     K_linear = 0.5
-    K_angular = 0.2
-    K_heading = 0.2
+    K_angular = 0.5
+    K_heading = 0.5
     
     # get distance between node_i and point_s
     distance = np.linalg.norm(np.array([[point_s[0]-node_i[0]],
@@ -323,23 +323,29 @@ class PathFollower():
                 local_paths_pixels = (self.map_origin[:2] + local_paths[:, best_opt_ind, :2]) / self.map_resolution
                 row_inds, col_inds = self.points_to_robot_circle(local_paths_pixels)
                 trajectory_cells = self.map_np[col_inds, row_inds]
-                
+                print('debug', np.max(row_inds) > np.shape(self.map_np)[1], np.max(col_inds) > np.shape(self.map_np)[0])
+                print(np.min(row_inds) < 0,  np.min(col_inds) < 0)
 
-                if np.max(row_inds) > np.shape(self.map_np)[1] or np.max(col_inds) > np.shape(self.map_np)[0] or np.min(row_inds) < 0 or np.min(col_inds) < 0:
+                if np.max(row_inds) > np.shape(self.map_np)[1] or np.max(col_inds) > np.shape(self.map_np)[0]: # or np.min(row_inds) < 0 or np.min(col_inds) < 0:
                     collision = True # Out of bounds
+                    print('Out of bounds')
                     min_cost = min(final_costs_copy)
                     final_costs_copy.remove(min_cost)
                     best_opt_ind = final_costs.index(min_cost)
                 else:
-                    if(np.max(trajectory_cells) == 0):
-                        collision = False                    
-                    else: 
-                        min_cost = min(final_costs_copy)
-                        final_costs_copy.remove(min_cost)
-                        best_opt_ind = final_costs.index(min_cost)
+                    collision = False    
+                    # if(np.max(trajectory_cells) == 0):
+                    #     collision = False                    
+                    # else: 
+                    #     print('collision is still True')
+                    #     # input()
+                    #     min_cost = min(final_costs_copy)
+                    #     final_costs_copy.remove(min_cost)
+                    #     best_opt_ind = final_costs.index(min_cost)
 
             if collision:  # hardcoded recovery if all options have collision (ie. no valid paths found)
-                control = [-.1, 0]
+                control = [0.1, 0]
+                # control = [-.1, 0]
             else:
                 control = velos[best_opt_ind]
                 self.local_path_pub.publish(utils.se2_pose_list_to_path(local_paths[:, best_opt_ind], 'map'))
@@ -350,6 +356,7 @@ class PathFollower():
             # uncomment out for debugging if necessary
             print("Selected control: {control}, Loop time: {time}, Max time: {max_time}".format(
                 control=control, time=(rospy.Time.now() - tic).to_sec(), max_time=1/CONTROL_RATE))
+            # input()
 
             self.rate.sleep()
 

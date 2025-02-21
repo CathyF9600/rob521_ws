@@ -810,8 +810,8 @@ def main():
 
     #RRT precursor
     path_planner = PathPlanner(map_filename, map_setings_filename, goal_point, stopping_dist)
-    path = path_planner.rrt_planning()
-    # path = path_planner.rrt_star_planning11()
+    # path = path_planner.rrt_planning()
+    path = path_planner.rrt_star_planning11()
     np.savetxt("mapfile.txt", path_planner.occupancy_map)
     print('path', path)
     node_path_metric = np.hstack(path_planner.recover_path())
