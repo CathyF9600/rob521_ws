@@ -11,6 +11,7 @@ from scipy.linalg import block_diag
 from scipy.spatial import cKDTree
 import math
 
+RADIUS = 5
 COLORS = dict(
     w=(255, 255, 255),
     k=(0, 0, 0),
@@ -60,8 +61,8 @@ class PathPlanner:
 
         #Robot information
         self.robot_radius = 0.22 #m
-        self.vel_max = 1 # 1m/s (Feel free to change!)
-        self.rot_vel_max = 1 #1rad/s (Feel free to change!)
+        self.vel_max = 1 #m/s (Feel free to change!)
+        self.rot_vel_max = 1 #rad/s (Feel free to change!)
 
         #Goal Parameters
         self.goal_point = goal_point #m
@@ -81,6 +82,7 @@ class PathPlanner:
         self.gamma_RRT = self.gamma_RRT_star + .1
         self.epsilon = 2.5
         
+        self.last_connected_id = 0
         #Pygame window for visualization
         self.window = pygame_utils.PygameWindow(
             "Path Planner", (1000, 1000), self.occupancy_map.shape, self.map_settings_dict, self.goal_point, self.stopping_dist)
@@ -93,169 +95,209 @@ class PathPlanner:
         # print('direction', direction, direction.type)
         return np.array([distance])
 
+    def distance_bw_points(self, p1, p2):
+        x_g = p1[0] - p2[0]
+        y_g = p1[1] - p2[1]
+        return np.sqrt(x_g ** 2 + y_g ** 2)
+
     def distance_to_goal1(self, point):
         # goal distance
         x_g = self.goal_point[0] - point[0]
         y_g = self.goal_point[1] - point[1]
 
         return np.sqrt(x_g ** 2 + y_g ** 2)
+    
+
+    def sample_point_in_bounded_ellipse(self, start, end, x_bounds, y_bounds):
+        """
+        Sample a point inside an ellipse between `start` and `end`, ensuring it lies within given bounds.
+        
+        Parameters:
+            start (np.ndarray): (2,1) array representing the start point [x; y].
+            end (np.ndarray): (2,1) array representing the end point [x; y].
+            x_bounds (tuple): (x_min, x_max) bounds.
+            y_bounds (tuple): (y_min, y_max) bounds.
+
+        Returns:
+            np.ndarray: A sampled point (2,1) within the ellipse and bounds.
+        """
+        center = (start + end) / 2  # Center of the ellipse
+        a = np.linalg.norm(end - start) / 2  # Semi-major axis (half of the distance)
+        b = a / 2  # Arbitrary semi-minor axis (adjustable)
+
+        while True:
+            # Sample a random angle
+            theta = np.random.uniform(0, 2 * np.pi)
+
+            # Sample radius in [0,1] and scale it to fit within the ellipse
+            r = np.random.uniform(0, a) ** 0.5  # Square root for uniform density
+            x_offset = r * a * np.cos(theta)
+            y_offset = r * b * np.sin(theta)
+
+            # Compute the sampled point
+            sampled_point = center + np.array([[x_offset], [y_offset]])
+
+            # Extract x and y
+            x, y = sampled_point[0, 0], sampled_point[1, 0]
+
+            # Check if the sampled point is within the specified bounds
+            if x_bounds[0] <= x <= x_bounds[1] and y_bounds[0] <= y <= y_bounds[1]:
+                return sampled_point
+
+
 
     #Functions required for RRT
-    def sample_map_space_bri(self): # bridge
+    def sample_map_space_bridge(self): # bridge
+        #Return an [x,y] coordinate to drive the robot 
+        # towards
+        # print("TO DO: Sample point to drive towards")
+        sample = np.zeros((2,1))
+        tighter_bound = np.array([[0.0, 44], 
+                                 [-46, 10]])
+        
+        dist_to_goal = self.distance_to_goal(self.nodes[self.last_connected_id].point) # the last node
+
+        if dist_to_goal < 5:
+            sample[0] = np.random.normal(self.goal_point[0], scale=5)  # Mean = goal, std dev = 2
+            sample[1] = np.random.normal(self.goal_point[1], scale=5)
+            c = COLORS['r']
+        else:
+            if len(self.nodes) > 4000: #dist_to_goal < 15: #15:
+                
+                # print('The sample is getting close to goal.')
+                padding = dist_to_goal * 0.5
+                # form a bound with range of [x_last - padding, goal + padding]
+                x_lower_bound = max((self.goal_point[0, 0] - padding)[0], tighter_bound[0, 0])
+                x_higher_bound = min((self.goal_point[0, 0] + padding)[0], tighter_bound[0, 1])
+                # form a bound with range of [y_last - padding, goal + padding]
+                y_lower_bound = max((self.goal_point[1, 0] - padding)[0], tighter_bound[1, 0])
+                y_higher_bound = min( (self.goal_point[1, 0] + padding)[0], tighter_bound[1, 1])
+                c = COLORS['r']
+
+            else:
+                
+                padding = dist_to_goal * 0.4
+                x_lower_bound = max((self.nodes[self.last_connected_id].point[0, 0] - padding)[0], tighter_bound[0, 0])
+                x_higher_bound = min((self.nodes[self.last_connected_id].point[0, 0] + padding)[0], tighter_bound[0, 1])
+                # form a bound with range of [y_last - padding, goal + padding]
+                y_lower_bound = max((self.nodes[self.last_connected_id].point[1, 0] - padding)[0], tighter_bound[1, 0])
+                y_higher_bound = min( (self.nodes[self.last_connected_id].point[1, 0] + padding)[0], tighter_bound[1, 1])
+                    
+
+            # # form a bound with range of [x_last - padding, goal + padding]
+            # x_lower_bound = max((self.nodes[-1].point[0, 0] - padding)[0], tighter_bound[0, 0])
+            # x_higher_bound = min((self.goal_point[0, 0] + padding)[0], tighter_bound[0, 1])
+            # # form a bound with range of [y_last - padding, goal + padding]
+            # y_lower_bound = max((self.goal_point[1, 0] - padding)[0], tighter_bound[1, 0])
+            # y_higher_bound = min( (self.nodes[-1].point[1, 0] + padding)[0], tighter_bound[1, 1])
+
+            sample[0] = np.random.uniform(low=x_lower_bound, high=x_higher_bound)
+            sample[1] = np.random.uniform(low=y_lower_bound, high=y_higher_bound)
+            sample_cand = []
+            for _ in range(100):
+                # print("x_lower_bound type:", type(x_lower_bound), x_lower_bound)
+                # print("y_lower_bound type:", type(y_lower_bound), y_lower_bound)
+
+                # assert np.isscalar(x_lower_bound) and np.isscalar(x_higher_bound), "Bounds must be scalars"
+                # assert np.isscalar(y_lower_bound) and np.isscalar(y_higher_bound), "Bounds must be scalars"
+
+                rand1 = sample
+                rand2 = np.array([np.random.normal(sample[0], scale=1),  # Mean = goal, std dev = 2
+                                np.random.normal(sample[1], scale=1)]).reshape(-1,1)
+                # print('rand[0]', rand1, rand1.shape)
+
+                if self.check_for_collision(rand1) and self.check_for_collision(rand2):  # Both points are free
+                    midpoint = (rand1 + rand2) / 2
+                    if not self.check_for_collision(midpoint):  # The midpoint is in an obstacle
+                        sample = midpoint
+                        sample_cand.append(sample)
+                        # break  # Use this sample
+                elif self.check_for_collision(rand1) or self.check_for_collision(rand2): 
+                    if not self.check_for_collision(rand1):
+                        sample = rand1
+                    elif not self.check_for_collision(rand2):
+                        sample = rand2
+                    sample_cand.append(sample)
+                    # break
+            metric = self.distance_to_goal(sample)
+            sample_final = sample
+            print('len', len(sample_cand))
+            for cand in sample_cand:
+                # print('cand', cand[:2], self.goal_point)
+                goal_metric = self.distance_to_goal(cand)
+                if goal_metric < metric:
+                    metric = goal_metric
+                    sample_final = cand
+            sample = sample_final
+            c = COLORS['b']
+        self.window.add_point(np.array(sample).reshape(2,), radius=RADIUS, width=0, color=c) # blue
+        # input()
+        return sample
+    
+    def sample_map_space(self):
         #Return an [x,y] coordinate to drive the robot towards
         # print("TO DO: Sample point to drive towards")
         sample = np.zeros((2,1))
         tighter_bound = np.array([[0.0, 44], 
                                  [-46, 10]])
         
-        dist_to_goal = self.distance_to_goal(self.nodes[-1].point) # the last node
         goal_bias_rate = 0.2
         cur_rand = np.random.rand()
         if cur_rand < goal_bias_rate:
             # Use goal-sampling occasionally
             sample = self.goal_point
-            return sample
-        if dist_to_goal < 5:
-            sample[0] = np.random.normal(self.goal_point[0], scale=3)  # Mean = goal, std dev = 2
-            sample[1] = np.random.normal(self.goal_point[1], scale=3)
-            return sample
-        if dist_to_goal < 30: #15:
-            # print('The sample is getting close to goal.')
-            padding = dist_to_goal
+
         else:
-            padding = 0.2 * dist_to_goal
-            
-        # form a bound with range of [x_last - padding, goal + padding]
-        x_lower_bound = max((self.nodes[-1].point[0, 0] - padding)[0], tighter_bound[0, 0])
-        x_higher_bound = min((self.goal_point[0, 0] + padding)[0], tighter_bound[0, 1])
-        # form a bound with range of [y_last - padding, goal + padding]
-        y_lower_bound = max((self.goal_point[1, 0] - padding)[0], tighter_bound[1, 0])
-        y_higher_bound = min((self.nodes[-1].point[1, 0] + padding)[0], tighter_bound[1, 1])
+            dist_to_goal = self.distance_to_goal(self.nodes[-1].point) # the last node
+            if dist_to_goal < 5:
+                sample[0] = np.random.normal(self.goal_point[0], scale=5)  # Mean = goal, std dev = 2
+                sample[1] = np.random.normal(self.goal_point[1], scale=5)
+            else:
+                if dist_to_goal < 15:
+                    # print('The sample is getting close to goal.')
+                    padding = dist_to_goal * 1.2
+                    # # form a bound with range of [x_last - padding, goal + padding]
+                    # x_lower_bound = max((self.goal_point[0, 0] - padding)[0], tighter_bound[0, 0])
+                    # x_higher_bound = min((self.goal_point[0, 0] + padding)[0], tighter_bound[0, 1])
+                    # # form a bound with range of [y_last - padding, goal + padding]
+                    # y_lower_bound = max((self.goal_point[0, 0] - padding)[0], tighter_bound[1, 0])
+                    # y_higher_bound = min( (self.goal_point[0, 0] + padding)[0], tighter_bound[1, 1])
+                    
+                else:
+                    padding = 0.2 * dist_to_goal
+                    
+                # form a bound with range of [x_last - padding, goal + padding]
+                x_lower_bound = max((self.nodes[-1].point[0, 0] - padding)[0], tighter_bound[0, 0])
+                x_higher_bound = min((self.goal_point[0, 0] + padding)[0], tighter_bound[0, 1])
+                # form a bound with range of [y_last - padding, goal + padding]
+                y_lower_bound = max((self.goal_point[1, 0] - padding)[0], tighter_bound[1, 0])
+                y_higher_bound = min( (self.nodes[-1].point[1, 0] + padding)[0], tighter_bound[1, 1])
 
-        sample[0] = np.random.uniform(low=x_lower_bound, high=x_higher_bound)
-        sample[1] = np.random.uniform(low=y_lower_bound, high=y_higher_bound)
-        for _ in range(2):
-            # print("x_lower_bound type:", type(x_lower_bound), x_lower_bound)
-            # print("y_lower_bound type:", type(y_lower_bound), y_lower_bound)
+                sample[0] = np.random.uniform(low=x_lower_bound, high=x_higher_bound)
+                sample[1] = np.random.uniform(low=y_lower_bound, high=y_higher_bound)
+                # print("de", sample)
+                # if cur_rand < bridge_rate:
+                #     for _ in range(2):
+                #         # print("x_lower_bound type:", type(x_lower_bound), x_lower_bound)
+                #         # print("y_lower_bound type:", type(y_lower_bound), y_lower_bound)
 
-            # assert np.isscalar(x_lower_bound) and np.isscalar(x_higher_bound), "Bounds must be scalars"
-            # assert np.isscalar(y_lower_bound) and np.isscalar(y_higher_bound), "Bounds must be scalars"
+                #         assert np.isscalar(x_lower_bound) and np.isscalar(x_higher_bound), "Bounds must be scalars"
+                #         assert np.isscalar(y_lower_bound) and np.isscalar(y_higher_bound), "Bounds must be scalars"
 
-            rand1 = sample
-            rand2 = np.array([np.random.normal(sample[0], scale=2),  # Mean = goal, std dev = 2
-                            np.random.normal(sample[1], scale=2)]).reshape(-1,1)
-            # print('rand[0]', rand1, rand1.shape)
+                #         rand1 = sample
+                #         rand2 = np.array([np.random.normal(sample[0], scale=2),  # Mean = goal, std dev = 2
+                #                         np.random.normal(sample[1], scale=2)]).reshape(-1,1)
+                #         # print('rand[0]', rand1, rand1.shape)
 
-            if self.check_for_collision(rand1) and self.check_for_collision(rand2):  # Both points are free
-                midpoint = (rand1 + rand2) / 2
-                if not self.check_for_collision(midpoint):  # The midpoint is in an obstacle
-                    sample = midpoint
-                    break  # Use this sample
-            elif self.check_for_collision(rand1) or self.check_for_collision(rand2): 
-                if not self.check_for_collision(rand1):
-                    sample = rand1
-                elif not self.check_for_collision(rand2):
-                    sample = rand2
-                break
+                #         if self.check_for_collision(rand1) and self.check_for_collision(rand2):  # Both points are free
+                #             midpoint = (rand1 + rand2) / 2
+                #             if not self.check_for_collision(midpoint):  # The midpoint is in an obstacle
+                #                 sample = midpoint
+                #                 break  # Use this sample
 
         self.window.add_point(np.array(sample).reshape(2,), radius=1, width=0, color=(0, 0, 255)) # blue
         return sample
     
-    # Functions required for RRT
-    def sample_map_space_simple(self):
-        # Return an [x,y] coordinate to drive the robot towards
-        # print("TO DO: Sample point to drive towards")
-        goal_bias_rate = 0.2
-        sample = np.zeros((2, 1))
-        tight_bounds = np.array([[0.0, 44], 
-                                 [-46, 10]])
-
-        if np.random.rand() < goal_bias_rate:
-            # Use goal-sampling occasionally
-            sample = self.goal_point
-
-        else:
-            # Use uniform random sampling
-            # Selecting a tighter bound from the most recent point to the goal point 
-            # Adding a margin to the bound 
-            curr_dis = self.distance_to_goal(self.nodes[-1].point)
-
-            if curr_dis < 15:
-                # add a larger margin when getting closer to the goal
-                # so that robot wouldn't stuck if blocked by obstacle
-                print("Close!")
-                margin = curr_dis
-            else:
-                margin = 0.2 * curr_dis
-
-            x_low_bound = max(self.nodes[-1].point[0, 0] - margin, tight_bounds[0, 0])
-            x_high_bound = min(self.goal_point[0, 0] + margin, tight_bounds[0, 1])
-
-            y_low_bound = max(self.goal_point[1, 0] - margin, tight_bounds[1, 0])
-            y_high_bound = min(self.nodes[-1].point[1, 0] + margin, tight_bounds[1, 1])
-
-            sample[0] = np.random.uniform(low=x_low_bound, high=x_high_bound)
-            sample[1] = np.random.uniform(low=y_low_bound, high=y_high_bound)
-
-        self.window.add_point(np.array(sample).reshape(2,), radius=1, width=0, color=COLORS['b'])
-
-        return sample
-    
-
-    # Functions required for RRT
-    def sample_map_space(self, mode='rrt'):
-        # Return an [x,y] coordinate to drive the robot towards
-        # print("TO DO: Sample point to drive towards")
-        goal_bias_rate = 0.5
-        sample = np.zeros((2, 1))
-        tight_bounds = np.array([[0.0, 44], 
-                                 [-46, 10]])
-
-        if np.random.rand() < goal_bias_rate:
-            # Use goal-sampling occasionally
-            # sample = self.goal_point
-            return_condition = False
-            std = 16 # so good for rrt
-            # graduate decreasing std
-            if mode != 'rrt': # for rrt star
-                if len(self.nodes) > 4000:
-                    std = 12
-            while not return_condition: # return if sample is within bounds
-                sample[0] = np.random.normal(self.goal_point[0], scale=std)  # Mean = goal, std dev = 10
-                sample[1] = np.random.normal(self.goal_point[1], scale=std)
-                return_condition = (sample[0] > tight_bounds[0, 0] and sample[0] < tight_bounds[0, 1] and \
-                                    sample[1] > tight_bounds[1, 0] and sample[1] < tight_bounds[1, 1])
-            
-            self.window.add_point(np.array(sample).reshape(2,), radius=1, width=0, color=COLORS['r'])
-            return sample
-        else:
-            # Use uniform random sampling
-            # Selecting a tighter bound from the most recent point to the goal point 
-            # Adding a margin to the bound 
-            curr_dis = self.distance_to_goal(self.nodes[-1].point)
-
-            if curr_dis < 15:
-                # add a larger margin when getting closer to the goal
-                # so that robot wouldn't stuck if blocked by obstacle
-                print("Close!")
-                margin = curr_dis
-            else:
-                margin = 0.2 * curr_dis
-
-            x_low_bound = max(self.nodes[-1].point[0, 0] - margin, tight_bounds[0, 0])
-            x_high_bound = min(self.goal_point[0, 0] + margin, tight_bounds[0, 1])
-
-            y_low_bound = max(self.goal_point[1, 0] - margin, tight_bounds[1, 0])
-            y_high_bound = min(self.nodes[-1].point[1, 0] + margin, tight_bounds[1, 1])
-
-            sample[0] = np.random.uniform(low=x_low_bound, high=x_high_bound)
-            sample[1] = np.random.uniform(low=y_low_bound, high=y_high_bound)
-
-        self.window.add_point(np.array(sample).reshape(2,), radius=1, width=0, color=COLORS['b'])
-
-        return sample
-    
-
     def check_if_duplicate(self, point):
         #Check if point is a duplicate of an already existing node
         # print("TO DO: Check that nodes are not duplicates")
@@ -284,24 +326,26 @@ class PathPlanner:
         vel, rot_vel = self.robot_controller(node_i, point_s)
         # print('vel', self.robot_controller(node_i, point_s), self.robot_controller1(node_i, point_s))
         # input()
+        # v, r = self.master_controller(node_i, vel, rot_vel)
         robot_traj = self.trajectory_rollout(vel, rot_vel, node_i)
+        # print('last',robot_traj)
+        d = self.distance_bw_points( robot_traj[:, -1], point_s)
+        # print("d", d)
+        # input()
         return robot_traj
     
     def robot_controller(self, node_i, point_s):
         #This controller determines the velocities that will nominally move the robot from node i to node s
         #Max velocities should be enforced
         # print("TO DO: Implement a control scheme to drive you towards the sampled point")
-        K_linear = 0.25
-        K_heading = 0.5
-        K_angular = 1.5
-
-        # K_linear = 0.2
-        # K_heading = 0.2
-        # K_angular = 0.2
+        K_linear = 0.5
+        K_heading = 0.25
+        K_angular = 0.5
         direction = (point_s - node_i[:2]).flatten()
         distance = np.linalg.norm(direction)
         theta = np.arctan2(direction[1], direction[0])
         heading_e = theta - node_i[2, 0]
+        # print('distance', direction, heading_e)
         # print('heading_e', heading_e)
 
         if heading_e > math.pi: # keep it bw  -pi and pi
@@ -317,6 +361,31 @@ class PathPlanner:
             rot_vel = max(K_angular * heading_e, -self.rot_vel_max)
         return vel, rot_vel
 
+    def master_controller(self, point_s, vel, rot_vel):
+        # with the vel rot vel pair
+        substep_time = self.timestep / self.num_substeps
+        vel_l, rotv_l = [np.array([vel])], [np.array([rot_vel])]
+        print('point_s', point_s)
+        heading_e = point_s[2, 0] + rot_vel
+        for i in range(self.num_substeps-1):
+            x_velos = vel * np.cos(heading_e)
+            y_velos = vel * np.sin(heading_e)
+            # print('contorl ', x_velos, y_velos)
+            x_substep_displacements = substep_time * x_velos
+            y_substep_displacements = substep_time * y_velos
+            cur_p = np.array([x_substep_displacements, y_substep_displacements, heading_e]).reshape(-1, 1)
+            vel, rot_vel = self.robot_controller(cur_p, point_s[:2])
+            # find heading error
+            direction = (point_s[:2] - cur_p[:2]).flatten()
+            theta = np.arctan2(direction[1], direction[0])
+            heading_e = theta - cur_p[2, 0]
+            vel_l.append(np.array([vel]))
+            rotv_l.append(np.array([rot_vel]))
+        v, r = np.array(vel_l), np.array(rotv_l)
+        print('v', v)
+        input('master')
+        return v, r
+
     
     def trajectory_rollout(self, vel, rot_vel, cur_pos):
         # Given your chosen velocities determine the trajectory of the robot for your given timestep
@@ -331,7 +400,9 @@ class PathPlanner:
         headings = np.linspace(init_heading, final_heading, num=self.num_substeps).reshape(-1, 1)
         # Find instantaneous linear velocities at each trajectory subpoint
         x_velos = np.zeros((self.num_substeps, 1)) # first step 0 linear velocity (coresponding to initial heading)
+        # print('headings[0:-1]', headings[0:-1].shape)
         x_velos[1:] = vel * np.cos(headings[0:-1]) # slice all except the last heading
+        # print('vel * np.cos(headings[0:-1])', vel , np.cos(headings[0:-1]), vel * np.cos(headings[0:-1]), self.num_substeps)
         y_velos = np.zeros((self.num_substeps, 1))
         y_velos[1:] = vel * np.sin(headings[0:-1])
         
@@ -395,7 +466,7 @@ class PathPlanner:
         #point is a 2 by 1 point
         # print("TO DO: Implement a way to connect two already existing nodes (for rewiring).")
         trajectory = self.simulate_trajectory(node_i, point_f)
-        # print('trajectory', trajectory)
+        print('trajectory', trajectory)
         return trajectory
     
     def cost_to_come(self, trajectory_o):
@@ -458,19 +529,10 @@ class PathPlanner:
         #This function performs RRT on the given map and robot
         #You do not need to demonstrate this function to the TAs, but it is left in for you to check your work
         for i in range(50000): #Most likely need more iterations than this to complete the map!
-            print('number of nodes', len(self.nodes))
-            sampled_collision = True
-            sampled_duplicate = True
-            while sampled_collision or sampled_duplicate:
-                #Sample map space
-                point = self.sample_map_space()
-                sampled_collision = self.check_for_collision(point)
-                sampled_duplicate = self.check_if_duplicate(point)
-                # if sampled_collision or sampled_duplicate:
-                #     self.window.add_point(np.copy(point.squeeze()), color=COLORS['r'])
-                # print(point, point.shape)
-            # print('sampled_collision', sampled_collision)
-            # print(self.check_for_collision(point))
+            print('itr', i)
+            #Sample map space
+            point = self.sample_map_space()
+            #print(i, point)
             curr_id = len(self.nodes) # the node id will be the array index
 
             #Get the closest point
@@ -486,14 +548,14 @@ class PathPlanner:
             if not collision and not duplicate:
                 self.nodes.append(Node(trajectory_o[:, -1].reshape(3,-1), closest_node_id, cost=0))
                 self.nodes[closest_node_id].children_ids.append(curr_id)
-
+                self.last_connected_id = curr_id
                 # visualizing the valid trajectory
                 temp_pt = np.array(trajectory_o[0:2, :]).copy().T
                 self.window.add_se2_pose(np.array(trajectory_o[:, -1].reshape((3,))))
                 for pt in temp_pt:
                     self.window.add_point(np.copy(pt), color=COLORS['g'])
-                print('distance', self.distance_to_goal(trajectory_o[:, -1]))
                 #Check if goal has been reached
+                print('distance', self.distance_to_goal(trajectory_o[:, -1]))
                 if self.distance_to_goal(trajectory_o[:, -1]) < self.stopping_dist:
                     print("RRT FINISHED")
                     path = self.recover_path()
@@ -579,13 +641,14 @@ class PathPlanner:
                     path = self.recover_path()
                     return path
         return self.nodes
+    
 
     def rrt_star_planning1(self):
         #This function performs RRT* for the given map and robot        
         from queue import PriorityQueue
 
         pq = PriorityQueue()
-        path_dictionary = {}
+
     
         for i in range(50000): #Most likely need more iterations than this to complete the map!
             print(len(self.nodes))
@@ -667,120 +730,11 @@ class PathPlanner:
                 if self.distance_to_goal(trajectory_o[:, -1]) < self.stopping_dist:
                     print("RRT* FINISHED")
                     path = self.recover_path()
-                    print('cost to come', self.cost_to_come(trajectory_o))
-                    cur_path_id = id(path)
-                    path_dictionary[cur_path_id] = path
-                    pq.put((self.cost_to_come(trajectory_o),  cur_path_id))
+                    pq.put((self.cost_to_come(trajectory_o), [path, trajectory_o]))
                     # return path
         print('pq', pq)
-        _, pid = pq.get()
-        return path_dictionary[pid]
-
-    def rrt_star_planning11(self):
-        #This function performs RRT* for the given map and robot        
-        from queue import PriorityQueue
-
-        pq = PriorityQueue()
-        path_dictionary = {}
-        for i in range(50000): #Most likely need more iterations than this to complete the map!
-            print('number of nodes', len(self.nodes))
-            #Sample
-            sampled_collision = True
-            sampled_duplicate = True
-            while sampled_collision or sampled_duplicate:
-                #Sample map space
-                point = self.sample_map_space()
-                sampled_collision = self.check_for_collision(point)
-                sampled_duplicate = self.check_if_duplicate(point)            
-            curr_id = len(self.nodes)
-            #Closest Node
-            closest_node_id = self.closest_node(point)
-            closest_node = self.nodes[closest_node_id]
-            #Simulate trajectory
-            trajectory_o = self.simulate_trajectory(closest_node.point, point)
-            cost_with_closest = self.cost_to_come(trajectory_o) + closest_node.cost
-            #Check for Collision
-            collision = self.check_for_collision(trajectory_o)
-            duplicate = self.check_if_duplicate(trajectory_o[:, -1])
-
-            if not collision and not duplicate:
-                ball_r = self.ball_radius()
-                neighbors = [] # ids
-                for i in range(1, len(self.nodes)):
-                    dist = np.linalg.norm(self.nodes[i].point[0:2] - point[0:2])
-                    # traj_n = self.simulate_trajectory(self.nodes[i].point, point)
-                    # cost_with_neighbor = self.cost_to_come(traj_n)
-                    # print('ball_r', ball_r, dist)
-                    # input()
-                    if dist <= ball_r and i != closest_node_id:
-                        neighbors.append(i)
-                #Last node rewire
-                #Default is the closest node
-                best_neighbor_id = closest_node_id
-                lowest_cost_so_far = cost_with_closest
-                traj_n = trajectory_o
-                # Find the best neighbor that can reduce cost to come for new point
-                for neighbor_id in neighbors:
-                    print('self.nodes[neighbor_id]', self.nodes[neighbor_id].point)
-                    traj_n = self.connect_node_to_point(node_i=self.nodes[neighbor_id].point, point_f=point) # new sub trajectory
-                    if not np.array_equal(traj_n, np.zeros((3, self.num_substeps))) \
-                         and not self.check_for_collision(traj_n):
-                        cost_with_neighbor = self.cost_to_come(traj_n) + self.nodes[neighbor_id].cost
-                        if cost_with_neighbor < lowest_cost_so_far:
-                            best_neighbor_id = neighbor_id
-                            lowest_cost_so_far = cost_with_neighbor
-                # Wire with the neighbor with lowest cost to come
-                newest_node = Node(traj_n[:,-1].reshape(3,-1), parent_id=best_neighbor_id, cost=lowest_cost_so_far)
-                self.nodes.append(newest_node)
-                self.nodes[best_neighbor_id].children_ids.append(curr_id)
-
-                # visualizing the valid trajectory
-                new_best_trajectory = self.simulate_trajectory(self.nodes[best_neighbor_id].point, point)
-                temp_pt = np.array(new_best_trajectory[0:2, :]).copy().T
-                self.window.add_se2_pose(np.array(new_best_trajectory[:, -1].reshape((3,))))
-                for pt in temp_pt:
-                    self.window.add_point(np.copy(pt), color=COLORS['g'])
-
-                #Close node rewire
-                for neighbor_id in neighbors:
-                    neighbor_node = self.nodes[neighbor_id]
-                    cur_cost = neighbor_node.cost
-                    traj_c = self.connect_node_to_point(neighbor_node.point, point) # c stand for close
-                    if not self.check_for_collision(traj_c) and \
-                        not np.array_equal(traj_c, np.zeros((3, self.num_substeps))):
-                        new_cost = newest_node.cost + self.cost_to_come(traj_c)
-                        if new_cost < cur_cost:
-                            # rewire
-                            self.nodes[neighbor_node.parent_id].children_ids.remove(neighbor_id)
-                            newest_node.children_ids.append(neighbor_id)
-                            neighbor_node.parent_id = curr_id
-
-                            # visualizing the rewiring
-                            #for pt in candidate_node.parent_trajectory.T:
-                            #    self.window.add_point(np.copy(pt), color=COLORS['w'])
-                            #candidate_node.parent_trajectory = traj[0:2,:]                       
-                            temp_pt = np.array(traj_c[0:2, :]).copy().T
-                            self.window.add_se2_pose(np.array(traj_c[:, -1].reshape((3,))))
-                            for pt in temp_pt:
-                                self.window.add_point(np.copy(pt), color=COLORS['r'])
-                        
-                            # self.update_children(neighbor_id)
-                            self.update_children1(neighbor_id, cur_cost)
-
-                #Check for early end
-                print('distance', self.distance_to_goal(new_best_trajectory[:, -1]))
-                if self.distance_to_goal(new_best_trajectory[:, -1]) < self.stopping_dist:
-                    print("RRT* FINISHED")
-                    path = self.recover_path()
-                    print('cost to come', self.cost_to_come(new_best_trajectory), path)
-                    input()
-                    cur_path_id = id(path)
-                    path_dictionary[cur_path_id] = path
-                    pq.put((self.cost_to_come(new_best_trajectory),  cur_path_id))
-                    # return path
-        print('pq', pq)
-        _, pid = pq.get()
-        return path_dictionary[pid]
+        _, res = pq.get()
+        return res[0]
     
     def recover_path(self, node_id = -1):
         path = [self.nodes[node_id].point]
@@ -801,8 +755,8 @@ class PathPlanner:
 
 def main():
     #Set map information
-    map_filename = "willowgarageworld_05res.png"
-    map_setings_filename = "willowgarageworld_05res.yaml"
+    map_filename = "myhal.png"
+    map_setings_filename = "myhal.yaml"
 
     #robot information
     goal_point = np.array([[42], [-44]]) #m # np.array([[10], [10]])
@@ -811,28 +765,27 @@ def main():
     #RRT precursor
     path_planner = PathPlanner(map_filename, map_setings_filename, goal_point, stopping_dist)
     path = path_planner.rrt_planning()
-    # path = path_planner.rrt_star_planning11()
+    # path = path_planner.rrt_star_planning1()
+
     np.savetxt("mapfile.txt", path_planner.occupancy_map)
     print('path', path)
     node_path_metric = np.hstack(path_planner.recover_path())
 
     #Leftover test functions
-    np.save("shortest_path_rrt_star.npy", node_path_metric)
+    np.save("shortest_path.npy", node_path_metric)
 
     #Leftover test functions
     if len(path) != 0:
         print("Success")
         path = np.array(path)
         print(path.shape)
-        # np.save("willowgarage_rrt.npy", path)
-        # np.save("willowgarage_rrt.npy", path)
+        np.save("myhal.npy", path)
 
         for i in range(path.shape[0]):
             # print('path[:2, i]', path[i, :2])
             path_planner.window.add_point(np.copy(path[i, :2]).reshape(2,), radius=4, width=0, color=COLORS['r'])
 
-    # pygame.image.save(path_planner.window.screen, "willowgarageworld_rrt.png")
-    pygame.image.save(path_planner.window.screen, "willowgarageworld_rrt_star.png")
+    pygame.image.save(path_planner.window.screen, "myhal.png")
 
 
 if __name__ == '__main__':
