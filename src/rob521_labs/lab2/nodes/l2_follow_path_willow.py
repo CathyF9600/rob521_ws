@@ -76,7 +76,7 @@ def robot_controller(node_i, point_s):
 
     # input()
     # vel = min(K_linear * distance - K_heading * abs(heading_e), VEL_MAX)
-    vel = max(min(VEL_MAX, K_linear * distance - K_heading * abs(heading_e)), 0.05)
+    vel = max(min(VEL_MAX, K_linear * distance - K_heading * abs(heading_e)), 0.05) # assume it doesnt go backwards
     # # avoid close to 0 vel
     # if vel < 0:
     #     vel = min(vel, -0.05)
@@ -239,21 +239,19 @@ class PathFollower():
             # self.pose_in_map_np -> current robot pose
             # self.cur_goal -> target of this trajectory rollout
             cur_position = self.pose_in_map_np.reshape((3,1))
-            heur_lin_velo, heur_ang_velo = robot_controller(cur_position, np.array([[self.cur_goal[0]],[self.cur_goal[1]]]))
+            heur_lin_vel, heur_ang_vel = robot_controller(cur_position, np.array([[self.cur_goal[0]],[self.cur_goal[1]]]))
             
             # Use the raw heuristic velocities for the first trajectory. 
             # Then randomly sample velocities within a range centered about these heuristic values for other trajectories
-            lin_velo = heur_lin_velo
-            ang_velo = heur_ang_velo
+            lin_vel = heur_lin_vel
+            ang_vel = heur_ang_vel
             substep_duration = INTEGRATION_DT
             
             # Get a set of lin and ang velocities sampled from a range centered about the heuristic velocities
             LIN_VEL_RNG = 0.05
             ANG_VEL_RNG = 0.1
-            velos = []
-            velos.append([lin_velo, ang_velo])
-            print("OG velos:")
-            print([lin_velo, ang_velo])
+            vel_opt_pairs = []
+            vel_opt_pairs.append([lin_vel, ang_vel])
             
             # For each trajectory
             for i in range(0, self.num_opts):
@@ -266,18 +264,18 @@ class PathFollower():
                 
                 # Get robot heading at each trajectory subpoint
                 init_heading = self.pose_in_map_np[2]
-                final_heading = init_heading + ang_velo * CONTROL_HORIZON
+                final_heading = init_heading + ang_vel * CONTROL_HORIZON
                 headings = np.linspace(init_heading, final_heading, num=self.horizon_timesteps+1).reshape(-1,1)
                 
                 # Find instantaneous linear velocities at each trajectory subpoint
-                x_velos = np.zeros((self.horizon_timesteps+1, 1))
-                x_velos[1:] = lin_velo * np.cos(headings[0:-1])
-                y_velos = np.zeros((self.horizon_timesteps+1, 1))
-                y_velos[1:] = lin_velo * np.sin(headings[0:-1])
+                x_vel = np.zeros((self.horizon_timesteps+1, 1))
+                x_vel[1:] = lin_vel * np.cos(headings[0:-1])
+                y_vel = np.zeros((self.horizon_timesteps+1, 1))
+                y_vel[1:] = lin_vel * np.sin(headings[0:-1])
                 
                 # Multiply velocities by substep duration for distance travelled between substeps
-                x_substep_displacements = substep_duration * x_velos
-                y_substep_displacements = substep_duration * y_velos
+                x_substep_displacements = substep_duration * x_vel
+                y_substep_displacements = substep_duration * y_vel
                 
                 # cumsum and add initial position to get trajectory subpoint locations
                 x_points = np.reshape(self.pose_in_map_np[0] + np.cumsum(x_substep_displacements), (self.horizon_timesteps+1, 1))
@@ -286,21 +284,17 @@ class PathFollower():
                 # Stack
                 local_paths[:,i,:] = np.hstack((x_points, y_points, headings))
                 
-                '''
-                end of trajectory rollout
-                '''
-                
-                lin_velo = random.uniform(heur_lin_velo-LIN_VEL_RNG, heur_lin_velo+LIN_VEL_RNG)
-                ang_velo = random.uniform(heur_ang_velo-ANG_VEL_RNG, heur_ang_velo+ANG_VEL_RNG)
-                if(lin_velo > VEL_MAX):
-                    lin_velo = VEL_MAX
-                if(lin_velo < 0.05):
-                    lin_velo = 0.05
-                if(ang_velo > ROT_VEL_MAX):
-                    ang_velo = ROT_VEL_MAX
-                if(ang_velo < -1*ROT_VEL_MAX):
-                    ang_velo = -1*ROT_VEL_MAX
-                velos.append([lin_velo, ang_velo])
+                lin_vel = random.uniform(heur_lin_vel-LIN_VEL_RNG, heur_lin_vel+LIN_VEL_RNG)
+                ang_vel = random.uniform(heur_ang_vel-ANG_VEL_RNG, heur_ang_vel+ANG_VEL_RNG)
+                if(lin_vel > VEL_MAX):
+                    lin_vel = VEL_MAX
+                if(lin_vel < 0.05):
+                    lin_vel = 0.05
+                if(ang_vel > ROT_VEL_MAX):
+                    ang_vel = ROT_VEL_MAX
+                if(ang_vel < -ROT_VEL_MAX):
+                    ang_vel = -ROT_VEL_MAX
+                vel_opt_pairs.append([lin_vel, ang_vel])
                     
             # Skipping collision checking until end for efficiency (lazy collision checking)
             # calculate final cost and choose best option
@@ -308,30 +302,30 @@ class PathFollower():
             
             final_costs = []
             
-            for opt_ind in range(local_paths.shape[1]):
-                final_costs.append(np.linalg.norm(self.cur_goal[0:2] - local_paths[-1,opt_ind,0:2]))
+            for opt_idx in range(local_paths.shape[1]):
+                final_costs.append(np.linalg.norm(self.cur_goal[0:2] - local_paths[-1,opt_idx,0:2]))
                 
             min_cost = min(final_costs)
-            best_opt_ind = final_costs.index(min_cost)
+            best_opt_idx = final_costs.index(min_cost)
             
             # Collision check for the best path. If it fails, take the next best path and repeat until chosen path passes
             final_costs_copy = final_costs.copy()
-            final_costs_copy.pop(best_opt_ind)
+            final_costs_copy.pop(best_opt_idx)
             collision = True
             
             while(collision and len(final_costs_copy) > 0):
-                local_paths_pixels = (self.map_origin[:2] + local_paths[:, best_opt_ind, :2]) / self.map_resolution
+                local_paths_pixels = (self.map_origin[:2] + local_paths[:, best_opt_idx, :2]) / self.map_resolution
                 row_inds, col_inds = self.points_to_robot_circle(local_paths_pixels)
                 trajectory_cells = self.map_np[col_inds, row_inds]
-                print('debug', np.max(row_inds) > np.shape(self.map_np)[1], np.max(col_inds) > np.shape(self.map_np)[0])
-                print(np.min(row_inds) < 0,  np.min(col_inds) < 0)
+                # print('debug', np.max(row_inds) > np.shape(self.map_np)[1], np.max(col_inds) > np.shape(self.map_np)[0])
+                # print(np.min(row_inds) < 0,  np.min(col_inds) < 0)
 
                 if np.max(row_inds) > np.shape(self.map_np)[1] or np.max(col_inds) > np.shape(self.map_np)[0]: # or np.min(row_inds) < 0 or np.min(col_inds) < 0:
                     collision = True # Out of bounds
                     print('Out of bounds')
                     min_cost = min(final_costs_copy)
                     final_costs_copy.remove(min_cost)
-                    best_opt_ind = final_costs.index(min_cost)
+                    best_opt_idx = final_costs.index(min_cost)
                 else:
                     collision = False    
                     # if(np.max(trajectory_cells) == 0):
@@ -341,14 +335,13 @@ class PathFollower():
                     #     # input()
                     #     min_cost = min(final_costs_copy)
                     #     final_costs_copy.remove(min_cost)
-                    #     best_opt_ind = final_costs.index(min_cost)
+                    #     best_opt_idx = final_costs.index(min_cost)
 
-            if collision:  # hardcoded recovery if all options have collision (ie. no valid paths found)
-                control = [0.1, 0]
-                # control = [-.1, 0]
+            if collision:  # if all options fail, back off
+                control = [-0.1, 0]
             else:
-                control = velos[best_opt_ind]
-                self.local_path_pub.publish(utils.se2_pose_list_to_path(local_paths[:, best_opt_ind], 'map'))
+                control = vel_opt_pairs[best_opt_idx]
+                self.local_path_pub.publish(utils.se2_pose_list_to_path(local_paths[:, best_opt_idx], 'map'))
 
             # send command to robot
             self.cmd_pub.publish(utils.unicyle_vel_to_twist(control))

@@ -53,3 +53,7 @@ CATKIN_IGNORE
 l2_planning_pra.py
 src/rob521_labs/lab2/nodes/l2_planning_example.py
 src/rob521_labs/lab2/nodes/l2_follow_path_myhal_example.py
+*.npy
+*.png
+src/rob521_labs/lab2/nodes/l2_follow_path_myhal.py
+src/rob521_labs/lab2/nodes/l2_planning_myhal.py
