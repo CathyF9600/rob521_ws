@@ -17,7 +17,7 @@ class PygameWindow:
                  real_map_size_pixels,
                  map_settings_dict,
                  goal_point,
-                 stopping_dist):
+                 stopping_dist, map='willowgarageworld_05res'):
 
         pygame.init()
         pygame.display.set_caption(name)
@@ -27,7 +27,7 @@ class PygameWindow:
         self.map_settings_dict = map_settings_dict
         self.origin = np.array(map_settings_dict['origin'])
 
-        map_img = pygame.image.load('../maps/willowgarageworld_05res.png')
+        map_img = pygame.image.load('../maps/' + map + '.png')
         map_img = pygame.transform.scale(map_img, self.size)
 
         self.screen = pygame.display.set_mode(self.size)
@@ -39,11 +39,13 @@ class PygameWindow:
         self.origin_pixels = np.array([-self.origin[0], full_map_height + self.origin[1]]) / self.meters_per_pixel
 
         self.add_se2_pose([0, 0, 0], length=5, color=COLORS['r'])
-        self.add_point(goal_point.flatten(), radius=stopping_dist / self.meters_per_pixel, color=COLORS['g'])
+        # print('self.meters_per_pixel', self.meters_per_pixel, stopping_dist / self.meters_per_pixel)
+        self.add_point(goal_point.flatten(), stopping_dist / self.meters_per_pixel, color=COLORS['g'])
 
     def add_point(self, map_frame_point, radius=1, width=0, color=COLORS['k']):
         map_frame_point[1] = -map_frame_point[1]  # for top left origin
         point_vec = self.point_to_vec(np.array(map_frame_point) / self.meters_per_pixel + self.origin_pixels)
+        print(point_vec, map_frame_point, 'self.meters_per_pixel', self.meters_per_pixel, 'self.origin_pixels', self.origin_pixels)
         pygame.draw.circle(self.screen, color, point_vec, radius, width)
         pygame.display.update()
 
