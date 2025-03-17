@@ -6,9 +6,10 @@ import threading
 from turtlebot3_msgs.msg import SensorState
 from std_msgs.msg import Empty
 from geometry_msgs.msg import Twist
+import time 
 
 INT32_MAX = 2**31
-NUM_ROTATIONS = 3 
+NUM_ROTATIONS = 3 #1
 TICKS_PER_ROTATION = 4096
 WHEEL_RADIUS = 0.066 / 2 #In meters
 
@@ -35,7 +36,11 @@ class wheelBaselineEstimator():
         #Reset the robot 
         reset_msg = Empty()
         self.reset_pub.publish(reset_msg)
-        print('Ready to start wheel radius calibration!')
+
+        # publish rotation
+        self.cmd_vel_pub = rospy.Publisher("cmd_vel", Twist, queue_size=1)
+
+        print('Ready to start wheel baseline calibration!')
         return
 
     def safeDelPhi(self, a, b):
@@ -67,20 +72,25 @@ class wheelBaselineEstimator():
         return
 
     def startStopCallback(self, msg):
+        # print(msg.angular.z)
         if self.isMoving is False and np.absolute(msg.angular.z) > 0:
-            self.isMoving = True #Set state to moving
-            print('Starting Calibration Procedure')
+            self.isMoving = True  # Set state to moving
+            print("Starting Calibration Procedure")
 
         elif self.isMoving is True and np.isclose(msg.angular.z, 0):
-            self.isMoving = False #Set the state to stopped
+            self.isMoving = False  # Set the state to stopped
+            # Calculate the separation of the wheels based on encoder measurements
+            print('del_encoders', self.del_left_encoder, self.del_right_encoder)
+            left_distance = (
+                (self.del_left_encoder / TICKS_PER_ROTATION) * 2 * np.pi * WHEEL_RADIUS
+            )
+            right_distance = (
+                (self.del_right_encoder / TICKS_PER_ROTATION) * 2 * np.pi * WHEEL_RADIUS
+            )
+            separation = (right_distance - left_distance) / (NUM_ROTATIONS * 2 * np.pi)
+            print("Calibrated Separation: {} m".format(separation))
 
-            # # YOUR CODE HERE!!!
-            # Calculate the radius of the wheel based on encoder measurements
-
-            # separation = ##
-            # print('Calibrated Separation: {} m'.format(separation))
-
-            #Reset the robot and calibration routine
+            # Reset the robot and calibration routine
             self.lock.acquire()
             self.left_encoder_prev = None
             self.right_encoder_prev = None
@@ -89,11 +99,51 @@ class wheelBaselineEstimator():
             self.lock.release()
             reset_msg = Empty()
             self.reset_pub.publish(reset_msg)
-            print('Resetted the robot to calibrate again!')
+            print("Resetted the robot to calibrate again!")
 
         return
 
+    def rotate_robot(self, angular_velocity):
+        rate_hz = 10  # Frequency in Hz
+        rate = rospy.Rate(rate_hz)
+        twist_msg = Twist()
+        twist_msg.angular.z = angular_velocity
+        
+        start_time = rospy.Time.now()  # Record start time
 
-if __name__ == '__main__':
-    Estimator = wheelBaselineEstimator() #create instance
+        while not rospy.is_shutdown():
+            elapsed_time = (rospy.Time.now() - start_time).to_sec()
+            if elapsed_time >= 6.0:
+                break  # Stop after 6 seconds
+
+            self.cmd_vel_pub.publish(twist_msg)
+            rate.sleep()
+        
+        # Stop the robot after rotating for 6 seconds
+        twist_msg.angular.z = 0.0
+        self.cmd_vel_pub.publish(twist_msg)
+
+
+import threading
+
+if __name__ == "__main__":
+    Estimator = wheelBaselineEstimator()  # create instance
+
+    # Define the angular velocity for rotation (radians per second)
+    angular_velocity = 0.5  # Adjust this value as needed
+    # rate_hz = 10
+    # # Start rotation
+    rotation_thread = threading.Thread(target=Estimator.rotate_robot, args=(angular_velocity,))
+
+    # # Start the rotation thread
+    rotation_thread.start()
+        # Start rotation
+    # Estimator.rotate_robot(angular_velocity)  # TODO: comment out for real deployment
+
+    # # Assuming we want each rotation to take 2 seconds, wait for 6 seconds for 3 rotations
+    # time.sleep(NUM_ROTATIONS * 2)
+
+    # # Stop rotation
+    # Estimator.rotate_robot(0)
+
     rospy.spin()

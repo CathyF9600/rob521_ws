@@ -75,9 +75,10 @@ class wheelRadiusEstimator():
 
             # # YOUR CODE HERE!!!
             # Calculate the radius of the wheel based on encoder measurements
-
-            # radius = ##
-            # print('Calibrated Radius: {} m'.format(radius))
+            left_radians = 2 * np.pi * self.del_left_encoder / TICKS_PER_ROTATION
+            right_radians = 2 * np.pi * self.del_right_encoder / TICKS_PER_ROTATION
+            radius = 2 * DRIVEN_DISTANCE / (right_radians + left_radians)
+            print('Calibrated Radius: {} m'.format(radius))
 
             #Reset the robot and calibration routine
             self.lock.acquire()
@@ -89,6 +90,7 @@ class wheelRadiusEstimator():
             reset_msg = Empty()
             self.reset_pub.publish(reset_msg)
             print('Resetted the robot to calibrate again!')
+
 
         return
 
