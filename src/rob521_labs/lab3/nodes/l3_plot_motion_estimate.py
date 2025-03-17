@@ -23,6 +23,7 @@ def plot(bag):
 
     data_labels = ["x", "y", "theta"]
     f, axes = plt.subplots(3, 1, sharex=True)
+    print('data', data)
     for k in range(3):
         for key, val in data.items():
             axes[k].plot(val["time"], val["data"][:, k], label=key)
@@ -37,5 +38,5 @@ def plot(bag):
 if __name__ == '__main__':
     rospack = rospkg.RosPack()
     path = rospack.get_path("rob521_lab3")
-    bag = rosbag.Bag(path+"/motion_estimate.bag")
+    bag = rosbag.Bag(path+"/motion_estimate_ha.bag")
     plot(bag)

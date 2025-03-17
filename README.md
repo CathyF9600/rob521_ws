@@ -23,3 +23,10 @@ task 6
     - on remote PC: `roslaunch rob521_lab3 mapping_rviz.launch`
     - `rosrun rob521_lab3 l3_mapping.py`
     - to teleoperate in myhal `roslaunch turtlebot3_teleop turtlebot3_teleop_key.launch`
+
+
+
+
+
+    Calibrated Separation: 0.27822802734375 m - 0.287 m
+    Calibrated Radius: 0.03623403751275076 m - 0.033 m

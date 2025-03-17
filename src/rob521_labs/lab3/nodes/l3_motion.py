@@ -52,7 +52,7 @@ class WheelOdom:
         # rosbag
         rospack = rospkg.RosPack()
         path = rospack.get_path("rob521_lab3")
-        self.bag = rosbag.Bag(path+"/motion_estimate_ha.bag", 'w')
+        self.bag = rosbag.Bag(path+"/motion_estimate_circle.bag", 'w')
 
         # reset current odometry to allow comparison with this node
         reset_pub = rospy.Publisher('/reset', Empty, queue_size=1, latch=True)
@@ -62,9 +62,9 @@ class WheelOdom:
             time.sleep(0.2)  # allow reset_pub to be ready to publish
         print('Robot odometry reset.')
 
-        # # Start concurrent thread to drive the robot in a circle
-        # self.drive_in_circle_thread = threading.Thread(target=self.drive_in_circle_hard)
-        # self.drive_in_circle_thread.start() # comment this out if we dont want to drive in a circle
+        # Start concurrent thread to drive the robot in a circle
+        self.drive_in_circle_thread = threading.Thread(target=self.drive_in_circle_easy)
+        self.drive_in_circle_thread.start() # comment this out if we dont want to drive in a circle
 
         rospy.spin()
         self.bag.close()
@@ -147,7 +147,7 @@ class WheelOdom:
         # get odom from turtlebot3 packages
         self.odom = odom_msg
 
-    def drive_in_circle(self):
+    def drive_in_circle_easy(self):
         print('Start drive_in_circle after 5s...')
         rospy.sleep(5)  # Wait for 5 seconds
 
@@ -180,7 +180,6 @@ class WheelOdom:
         move_cmd.angular.z = 0
         move_pub.publish(move_cmd)
 
-
     def drive_in_circle_hard(self):
         print('Start drive_in_circle after 5s...')
         rospy.sleep(2)  # Wait for 5 seconds
@@ -189,7 +188,7 @@ class WheelOdom:
         move_cmd = Twist()
 
         # Set linear velocity (forward motion)
-        move_cmd.linear.x = 1.5  # m/s (linear speed)
+        move_cmd.linear.x = 1  # m/s (linear speed)
         # Set angular velocity (circular motion)
         move_cmd.angular.z = 0  # rad/s (angular speed)
 
@@ -206,11 +205,11 @@ class WheelOdom:
             if elapsed_time >= 8:
                 break  # Stop after 6 seconds
             elif elapsed_time >= 6:
-                move_cmd.linear.x = 1.5  # m/s (linear speed)
+                move_cmd.linear.x = 1  # m/s (linear speed)
                 move_cmd.angular.z = 0  # rad/s (angular speed)
 
             elif elapsed_time >= 4:
-                move_cmd.linear.x = 1.5  # m/s (linear speed)
+                move_cmd.linear.x = 1  # m/s (linear speed)
                 move_cmd.angular.z = 1  # rad/s (angular speed)
 
             move_pub.publish(move_cmd)
@@ -220,7 +219,6 @@ class WheelOdom:
         move_cmd.linear.x = 0
         move_cmd.angular.z = 0
         move_pub.publish(move_cmd)
-
 
     def plot(self, bag):
         data = {"odom_est":{"time":[], "data":[]}, 
