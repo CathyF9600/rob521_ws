@@ -18,11 +18,11 @@ from std_msgs.msg import Empty
 from utils import convert_pose_to_tf, euler_from_ros_quat, ros_quat_from_euler
 
 
+INT32_MAX = 2**31
 ENC_TICKS = 4096
 RAD_PER_TICK = 0.001533981
 WHEEL_RADIUS = .066 / 2
 BASELINE = .287 / 2
-
 
 class WheelOdom:
     def __init__(self):
@@ -65,6 +65,17 @@ class WheelOdom:
         self.bag.close()
         print("saving bag")
 
+    def safeDelPhi(self, a, b):
+        #Need to check if the encoder storage variable has overflowed
+        diff = np.int64(b) - np.int64(a)
+        if diff < -np.int64(INT32_MAX): #Overflowed
+            delPhi = (INT32_MAX - 1 - a) + (INT32_MAX + b) + 1
+        elif diff > np.int64(INT32_MAX) - 1: #Underflowed
+            delPhi = (INT32_MAX + a) + (INT32_MAX - 1 - b) + 1
+        else:
+            delPhi = b - a  
+        return delPhi
+
     def sensor_state_cb(self, sensor_state_msg):
         # Callback for whenever a new encoder message is published
         # set initial encoder pose
@@ -88,6 +99,24 @@ class WheelOdom:
             # self.twist.linear.x = mu_dot[0].item()
             # self.twist.linear.y = mu_dot[1].item()
             # self.twist.angular.z = mu_dot[2].item()
+
+            left_radians = RAD_PER_TICK * self.safeDelPhi(self.last_enc_l, le)
+            right_radians = RAD_PER_TICK * self.safeDelPhi(self.last_enc_r, re)
+            self.last_enc_l = le
+            self.last_enc_r = re
+            
+            self.pose.position.x = self.pose.position.x + np.cos(self.pose.orientation.z) * WHEEL_RADIUS / 2 * (left_radians + right_radians)
+            self.pose.position.y = self.pose.position.y + np.sin(self.pose.orientation.z) * WHEEL_RADIUS / 2 * (left_radians + right_radians)
+            self.pose.orientation.z = self.pose.orientation.z + WHEEL_RADIUS / (2 * BASELINE) * (right_radians - left_radians)
+            if(self.pose.orientation.z > np.pi):
+                self.pose.orientation.z = self.pose.orientation.z - 2*np.pi
+            if(self.pose.orientation.z < -1*np.pi):
+                self.pose.orientation.z = self.pose.orientation.z + 2*np.pi
+
+            self.twist.linear.x = np.cos(self.pose.orientation.z) * WHEEL_RADIUS / 2 * (left_radians + right_radians)
+            self.twist.linear.y = np.sin(self.pose.orientation.z) * WHEEL_RADIUS / 2 * (left_radians + right_radians)
+            self.twist.angular.z = WHEEL_RADIUS / (2 * BASELINE) * (right_radians - left_radians)
+
 
             # publish the updates as a topic and in the tf tree
             current_time = rospy.Time.now()

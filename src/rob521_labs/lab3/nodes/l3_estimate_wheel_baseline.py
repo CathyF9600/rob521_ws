@@ -9,7 +9,7 @@ from geometry_msgs.msg import Twist
 import time 
 
 INT32_MAX = 2**31
-NUM_ROTATIONS = 3 #1
+NUM_ROTATIONS = 1
 TICKS_PER_ROTATION = 4096
 WHEEL_RADIUS = 0.066 / 2 #In meters
 
@@ -38,7 +38,7 @@ class wheelBaselineEstimator():
         self.reset_pub.publish(reset_msg)
 
         # publish rotation
-        self.cmd_vel_pub = rospy.Publisher("cmd_vel", Twist, queue_size=1)
+        self.cmd_vel_pub = rospy.Publisher("cmd_vel", Twist, queue_size=1) # for calibration before the lab
 
         print('Ready to start wheel baseline calibration!')
         return
@@ -72,7 +72,7 @@ class wheelBaselineEstimator():
         return
 
     def startStopCallback(self, msg):
-        # print(msg.angular.z)
+        print(msg)
         if self.isMoving is False and np.absolute(msg.angular.z) > 0:
             self.isMoving = True  # Set state to moving
             print("Starting Calibration Procedure")
@@ -113,7 +113,7 @@ class wheelBaselineEstimator():
 
         while not rospy.is_shutdown():
             elapsed_time = (rospy.Time.now() - start_time).to_sec()
-            if elapsed_time >= 6.0:
+            if elapsed_time >= 6.28:
                 break  # Stop after 6 seconds
 
             self.cmd_vel_pub.publish(twist_msg)
@@ -130,7 +130,7 @@ if __name__ == "__main__":
     Estimator = wheelBaselineEstimator()  # create instance
 
     # Define the angular velocity for rotation (radians per second)
-    angular_velocity = 0.5  # Adjust this value as needed
+    angular_velocity = 1  # Adjust this value as needed
     # rate_hz = 10
     # # Start rotation
     rotation_thread = threading.Thread(target=Estimator.rotate_robot, args=(angular_velocity,))
