@@ -95,6 +95,16 @@ class OccupancyGripMap:
         # YOUR CODE HERE!!! Loop through each measurement in scan_msg to get the correct angle and
         # x_start and y_start to send to your ray_trace_update function.
 
+        ranges = scan_msg.ranges[::SCAN_DOWNSAMPLE]
+        
+        for i, r in enumerate(ranges):
+            if (scan_msg.range_min < r) and (r < scan_msg.range_max):
+                angle = odom_map[2] + SCAN_DOWNSAMPLE * i * scan_msg.angle_increment
+                x_start = odom_map[0] / CELL_SIZE
+                y_start = odom_map[1] / CELL_SIZE
+                range_mes = r / CELL_SIZE
+                self.np_map, self.log_odds = self.ray_trace_update(self.np_map, self.log_odds, x_start, y_start, angle, range_mes)
+        
         # publish the message
         self.map_msg.info.map_load_time = rospy.Time.now()
         self.map_msg.data = self.np_map.flatten()
@@ -115,7 +125,39 @@ class OccupancyGripMap:
         # YOUR CODE HERE!!! You should modify the log_odds object and the numpy map based on the outputs from
         # ray_trace and the equations from class. Your numpy map must be an array of int8s with 0 to 100 representing
         # probability of occupancy, and -1 representing unknown.
+        
+        x_end = int(x_start + range_mes * np.cos(angle)) # Get x endpoint
+        y_end = int(y_start + range_mes * np.sin(angle)) # Get y endpoint
+        
+        obs = NUM_PTS_OBSTACLE + range_mes # Get obstacles
+        x_end_obs = int(x_start + obs * np.cos(angle))
+        y_end_obs = int(y_start + obs * np.sin(angle))
+        
+        x_start = int(x_start)
+        y_start = int(y_start)
+        
+        len_x, len_y = map.shape # Get map size
+        
+        # Ray trace
+        free_rr, free_cc = ray_trace(y_start, x_start, y_end, x_end)
+        obs_rr, obs_cc = ray_trace(y_end, x_end, y_end_obs, x_end_obs)
+        
+        # Remove invalid entries
+        valid_free = (free_rr >= 0) & (free_rr < len_x) & (free_cc >= 0) & (free_cc < len_y)
+        free_rr, free_cc = free_rr[valid_free], free_cc[valid_free]
 
+        valid_obs = (obs_rr >= 0) & (obs_rr < len_x) & (obs_cc >= 0) & (obs_cc < len_y)
+        obs_rr, obs_cc = obs_rr[valid_obs], obs_cc[valid_obs]
+        
+        # Update log odds
+        log_odds[free_rr, free_cc] -= BETA
+        log_odds[obs_rr, obs_cc] += ALPHA
+        
+        # Find probability
+        rr = np.concatenate((free_rr, obs_rr))
+        cc = np.concatenate((free_cc, obs_cc))
+        map[rr, cc] = (self.log_odds_to_probability(log_odds[rr, cc])*100).astype(np.int8)
+        
         return map, log_odds
 
     def log_odds_to_probability(self, values):

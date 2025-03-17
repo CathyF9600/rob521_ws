@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import division, print_function
 import time
+import threading
 
 import numpy as np
 import rospy
@@ -18,11 +19,11 @@ from std_msgs.msg import Empty
 from utils import convert_pose_to_tf, euler_from_ros_quat, ros_quat_from_euler
 
 
-INT32_MAX = 2**31
 ENC_TICKS = 4096
 RAD_PER_TICK = 0.001533981
 WHEEL_RADIUS = .066 / 2
 BASELINE = .287 / 2
+
 
 class WheelOdom:
     def __init__(self):
@@ -61,20 +62,13 @@ class WheelOdom:
             time.sleep(0.2)  # allow reset_pub to be ready to publish
         print('Robot odometry reset.')
 
+        # Start concurrent thread to drive the robot in a circle
+        self.drive_in_circle_thread = threading.Thread(target=self.drive_in_circle)
+        self.drive_in_circle_thread.start() # comment this out if we dont want to drive in a circle
+
         rospy.spin()
         self.bag.close()
         print("saving bag")
-
-    def safeDelPhi(self, a, b):
-        #Need to check if the encoder storage variable has overflowed
-        diff = np.int64(b) - np.int64(a)
-        if diff < -np.int64(INT32_MAX): #Overflowed
-            delPhi = (INT32_MAX - 1 - a) + (INT32_MAX + b) + 1
-        elif diff > np.int64(INT32_MAX) - 1: #Underflowed
-            delPhi = (INT32_MAX + a) + (INT32_MAX - 1 - b) + 1
-        else:
-            delPhi = b - a  
-        return delPhi
 
     def sensor_state_cb(self, sensor_state_msg):
         # Callback for whenever a new encoder message is published
@@ -84,39 +78,48 @@ class WheelOdom:
             self.last_enc_r = sensor_state_msg.right_encoder
             self.last_time = sensor_state_msg.header.stamp
         else:
+            current_time = sensor_state_msg.header.stamp
+            dt = (current_time - self.last_time).to_sec()
+
             # update calculated pose and twist with new data
             le = sensor_state_msg.left_encoder
             re = sensor_state_msg.right_encoder
+
+            delta_le = (le - self.last_enc_l) * RAD_PER_TICK
+            delta_re = (re - self.last_enc_r) * RAD_PER_TICK
+
+            self.last_enc_l = le 
+            self.last_enc_r = re
+            self.last_time = current_time
+
+            # Distance traveled by each wheel
+            d_left = delta_le * WHEEL_RADIUS
+            d_right = delta_re * WHEEL_RADIUS
+
+            # Average distance traveled by the robot
+            d_center = (d_left + d_right) / 2
+
+            # Change in orientation
+            delta_theta = (d_right - d_left) / (2 * BASELINE)
+            theta = euler_from_ros_quat(self.pose.orientation)[2] + delta_theta
+
+            # Update position
+            dx = d_center * np.cos(theta)
+            dy = d_center * np.sin(theta)
 
             # # YOUR CODE HERE!!!
             # Update your odom estimates with the latest encoder measurements and populate the relevant area
             # of self.pose and self.twist with estimated position, heading and velocity
 
-            # self.pose.position.x = xx
-            # self.pose.position.y = xx
-            # self.pose.orientation = xx
+            # Update pose
+            self.pose.position.x += dx
+            self.pose.position.y += dy
+            self.pose.orientation = ros_quat_from_euler((0, 0, theta))
 
-            # self.twist.linear.x = mu_dot[0].item()
-            # self.twist.linear.y = mu_dot[1].item()
-            # self.twist.angular.z = mu_dot[2].item()
-
-            left_radians = RAD_PER_TICK * self.safeDelPhi(self.last_enc_l, le)
-            right_radians = RAD_PER_TICK * self.safeDelPhi(self.last_enc_r, re)
-            self.last_enc_l = le
-            self.last_enc_r = re
-            
-            self.pose.position.x = self.pose.position.x + np.cos(self.pose.orientation.z) * WHEEL_RADIUS / 2 * (left_radians + right_radians)
-            self.pose.position.y = self.pose.position.y + np.sin(self.pose.orientation.z) * WHEEL_RADIUS / 2 * (left_radians + right_radians)
-            self.pose.orientation.z = self.pose.orientation.z + WHEEL_RADIUS / (2 * BASELINE) * (right_radians - left_radians)
-            if(self.pose.orientation.z > np.pi):
-                self.pose.orientation.z = self.pose.orientation.z - 2*np.pi
-            if(self.pose.orientation.z < -1*np.pi):
-                self.pose.orientation.z = self.pose.orientation.z + 2*np.pi
-
-            self.twist.linear.x = np.cos(self.pose.orientation.z) * WHEEL_RADIUS / 2 * (left_radians + right_radians)
-            self.twist.linear.y = np.sin(self.pose.orientation.z) * WHEEL_RADIUS / 2 * (left_radians + right_radians)
-            self.twist.angular.z = WHEEL_RADIUS / (2 * BASELINE) * (right_radians - left_radians)
-
+            # Update twist (velocity)
+            self.twist.linear.x = d_center / dt
+            self.twist.linear.y = 0  # assuming no lateral movement
+            self.twist.angular.z = delta_theta / dt
 
             # publish the updates as a topic and in the tf tree
             current_time = rospy.Time.now()
@@ -130,20 +133,43 @@ class WheelOdom:
             self.wheel_odom_pub.publish(self.wheel_odom)
 
             self.bag.write('odom_est', self.wheel_odom)
+            self.bag.write('odom_onboard', self.odom)
 
-            # for testing against actual odom
-            # print("Wheel Odom: x: %2.3f, y: %2.3f, t: %2.3f" % (
-            #     self.pose.position.x, self.pose.position.y, mu[2].item()
-            # ))
-            # print("Turtlebot3 Odom: x: %2.3f, y: %2.3f, t: %2.3f" % (
-            #     self.odom.pose.pose.position.x, self.odom.pose.pose.position.y,
-            #     euler_from_ros_quat(self.odom.pose.pose.orientation)[2]
-            # ))
+            print("Wheel Odom: x: %2.3f, y: %2.3f, t: %2.3f" % (
+                self.pose.position.x, self.pose.position.y, theta
+            ))
+            print("Turtlebot3 Odom: x: %2.3f, y: %2.3f, t: %2.3f" % (
+                self.odom.pose.pose.position.x, self.odom.pose.pose.position.y,
+                euler_from_ros_quat(self.odom.pose.pose.orientation)[2]
+            ))
 
     def odom_cb(self, odom_msg):
         # get odom from turtlebot3 packages
         self.odom = odom_msg
-        self.bag.write('odom_onboard', self.odom)
+
+    def drive_in_circle(self):
+        print('Start drive_in_circle after 5s...')
+        rospy.sleep(5)  # Wait for 5 seconds
+
+        # Create a Twist message to control the robot
+        move_cmd = Twist()
+
+        # Set linear velocity (forward motion)
+        move_cmd.linear.x = 0.2  # m/s (linear speed)
+        # Set angular velocity (circular motion)
+        move_cmd.angular.z = 0.2  # rad/s (angular speed)
+
+        # Publish the command to drive in a circle
+        move_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
+
+        # Start driving in a circle for 3 seconds
+        move_pub.publish(move_cmd)
+        rospy.sleep(4)
+
+        # Stop the robot after the circle is completed
+        move_cmd.linear.x = 0
+        move_cmd.angular.z = 0
+        move_pub.publish(move_cmd)
 
     def plot(self, bag):
         data = {"odom_est":{"time":[], "data":[]}, 
