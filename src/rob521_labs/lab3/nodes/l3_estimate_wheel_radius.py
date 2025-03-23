@@ -99,7 +99,7 @@ class wheelRadiusEstimator():
         return
 
 
-    def rotate_robot(self, linear_velocity):
+    def translate_robot(self, linear_velocity):
         rate_hz = 10  # Frequency in Hz
         rate = rospy.Rate(rate_hz)
         twist_msg = Twist()
