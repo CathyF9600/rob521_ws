@@ -33,6 +33,10 @@ class wheelRadiusEstimator():
         #Reset the robot 
         reset_msg = Empty()
         self.reset_pub.publish(reset_msg)
+
+        # publish rotation
+        self.cmd_vel_pub = rospy.Publisher("cmd_vel", Twist, queue_size=1) # for calibration before the lab
+
         print('Ready to start wheel radius calibration!')
         return
 
@@ -95,6 +99,34 @@ class wheelRadiusEstimator():
         return
 
 
+    def rotate_robot(self, linear_velocity):
+        rate_hz = 10  # Frequency in Hz
+        rate = rospy.Rate(rate_hz)
+        twist_msg = Twist()
+        twist_msg.linear.x = linear_velocity
+        
+        start_time = rospy.Time.now()  # Record start time
+
+        while not rospy.is_shutdown():
+            elapsed_time = (rospy.Time.now() - start_time).to_sec()
+            if elapsed_time >= 4:
+                break  # Stop after 6 seconds
+
+            self.cmd_vel_pub.publish(twist_msg)
+            rate.sleep()
+        
+        # Stop the robot after rotating for 6 seconds
+        twist_msg.linear.x = 0.0
+        self.cmd_vel_pub.publish(twist_msg)
+
 if __name__ == '__main__':
     Estimator = wheelRadiusEstimator() #create instance
+        # Define the angular velocity for rotation (radians per second)
+    linear_velocity = 0.25  # Adjust this value as needed
+    # rate_hz = 10
+    # # Start rotation
+    rotation_thread = threading.Thread(target=Estimator.rotate_robot, args=(linear_velocity,))
+
+    # # Start the rotation thread
+    rotation_thread.start()
     rospy.spin()

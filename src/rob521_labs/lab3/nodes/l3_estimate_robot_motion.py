@@ -52,7 +52,7 @@ class WheelOdom:
         # rosbag
         rospack = rospkg.RosPack()
         path = rospack.get_path("rob521_lab3")
-        self.bag = rosbag.Bag(path+"/motion_estimate.bag", 'w')
+        self.bag = rosbag.Bag(path+"/motion_estimate_ha.bag", 'w')
 
         # reset current odometry to allow comparison with this node
         reset_pub = rospy.Publisher('/reset', Empty, queue_size=1, latch=True)
@@ -62,9 +62,9 @@ class WheelOdom:
             time.sleep(0.2)  # allow reset_pub to be ready to publish
         print('Robot odometry reset.')
 
-        # Start concurrent thread to drive the robot in a circle
-        self.drive_in_circle_thread = threading.Thread(target=self.drive_in_circle)
-        self.drive_in_circle_thread.start() # comment this out if we dont want to drive in a circle
+        # # Start concurrent thread to drive the robot in a circle
+        # self.drive_in_circle_thread = threading.Thread(target=self.drive_in_circle_hard)
+        # self.drive_in_circle_thread.start() # comment this out if we dont want to drive in a circle
 
         rospy.spin()
         self.bag.close()
@@ -163,13 +163,64 @@ class WheelOdom:
         move_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
 
         # Start driving in a circle for 3 seconds
-        move_pub.publish(move_cmd)
-        rospy.sleep(4)
+        # move_pub.publish(move_cmd)
+        rate_hz = 10  # Frequency in Hz
+        rate = rospy.Rate(rate_hz)
+        start_time = rospy.Time.now()  # Record start time
+        while not rospy.is_shutdown():
+            elapsed_time = (rospy.Time.now() - start_time).to_sec()
+            if elapsed_time >= 45:
+                break  # Stop after 6 seconds
+
+            move_pub.publish(move_cmd)
+            rate.sleep()
 
         # Stop the robot after the circle is completed
         move_cmd.linear.x = 0
         move_cmd.angular.z = 0
         move_pub.publish(move_cmd)
+
+
+    def drive_in_circle_hard(self):
+        print('Start drive_in_circle after 5s...')
+        rospy.sleep(2)  # Wait for 5 seconds
+
+        # Create a Twist message to control the robot
+        move_cmd = Twist()
+
+        # Set linear velocity (forward motion)
+        move_cmd.linear.x = 1.5  # m/s (linear speed)
+        # Set angular velocity (circular motion)
+        move_cmd.angular.z = 0  # rad/s (angular speed)
+
+        # Publish the command to drive in a circle
+        move_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
+
+        # Start driving in a circle for 3 seconds
+        # move_pub.publish(move_cmd)
+        rate_hz = 10  # Frequency in Hz
+        rate = rospy.Rate(rate_hz)
+        start_time = rospy.Time.now()  # Record start time
+        while not rospy.is_shutdown():
+            elapsed_time = (rospy.Time.now() - start_time).to_sec()
+            if elapsed_time >= 8:
+                break  # Stop after 6 seconds
+            elif elapsed_time >= 6:
+                move_cmd.linear.x = 1.5  # m/s (linear speed)
+                move_cmd.angular.z = 0  # rad/s (angular speed)
+
+            elif elapsed_time >= 4:
+                move_cmd.linear.x = 1.5  # m/s (linear speed)
+                move_cmd.angular.z = 1  # rad/s (angular speed)
+
+            move_pub.publish(move_cmd)
+            rate.sleep()
+
+        # Stop the robot after the circle is completed
+        move_cmd.linear.x = 0
+        move_cmd.angular.z = 0
+        move_pub.publish(move_cmd)
+
 
     def plot(self, bag):
         data = {"odom_est":{"time":[], "data":[]}, 
